@@ -138,6 +138,23 @@ STATIC mp_obj_t mod_thread_stack_size(size_t n_args, const mp_obj_t *args) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_thread_stack_size_obj, 0, 1, mod_thread_stack_size);
 
+/****************************************************************/
+// _thread priority Hexin 2019-09-27
+
+STATIC size_t thread_task_priority = MP_THREAD_PRIORITY;
+
+STATIC mp_obj_t mod_thread_task_priority(size_t n_args, const mp_obj_t *args) {
+    mp_obj_t ret = mp_obj_new_int_from_uint(thread_task_priority);
+    if (n_args == 0) {
+        thread_task_priority = 0;
+    } else {
+        thread_task_priority = mp_obj_get_int(args[0]);
+    }
+    return ret;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_thread_task_priority_obj, 0, 1, mod_thread_task_priority);
+
+
 typedef struct _thread_entry_args_t {
     mp_obj_dict_t *dict_locals;
     mp_obj_dict_t *dict_globals;
@@ -250,7 +267,7 @@ STATIC mp_obj_t mod_thread_start_new_thread(size_t n_args, const mp_obj_t *args)
     th_args->fun = args[0];
 
     // spawn the thread!
-    mp_thread_create(thread_entry, th_args, &th_args->stack_size);
+    mp_thread_create(thread_entry, th_args, &th_args->stack_size, thread_task_priority);
 
     return mp_const_none;
 }
@@ -273,6 +290,7 @@ STATIC const mp_rom_map_elem_t mp_module_thread_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_LockType), MP_ROM_PTR(&mp_type_thread_lock) },
     { MP_ROM_QSTR(MP_QSTR_get_ident), MP_ROM_PTR(&mod_thread_get_ident_obj) },
     { MP_ROM_QSTR(MP_QSTR_stack_size), MP_ROM_PTR(&mod_thread_stack_size_obj) },
+    { MP_ROM_QSTR(MP_QSTR_priority), MP_ROM_PTR(&mod_thread_task_priority_obj) },
     { MP_ROM_QSTR(MP_QSTR_start_new_thread), MP_ROM_PTR(&mod_thread_start_new_thread_obj) },
     { MP_ROM_QSTR(MP_QSTR_exit), MP_ROM_PTR(&mod_thread_exit_obj) },
     { MP_ROM_QSTR(MP_QSTR_allocate_lock), MP_ROM_PTR(&mod_thread_allocate_lock_obj) },

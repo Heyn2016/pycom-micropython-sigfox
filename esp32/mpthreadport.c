@@ -198,8 +198,8 @@ memory_error:
     nlr_raise(mp_obj_new_exception_msg(&mp_type_MemoryError, "can't create thread"));
 }
 
-void mp_thread_create(void *(*entry)(void*), void *arg, size_t *stack_size) {
-    mp_thread_create_ex(entry, arg, stack_size, MP_THREAD_PRIORITY, "MPThread");
+void mp_thread_create(void *(*entry)(void*), void *arg, size_t *stack_size, int priority) {
+    mp_thread_create_ex(entry, arg, stack_size, priority, "MPThread");
 }
 
 void mp_thread_finish(void) {
