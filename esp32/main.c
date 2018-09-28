@@ -122,7 +122,10 @@ void app_main(void) {
     mperror_pre_init();
 
     // differentiate the Flash Size (either 8MB or 4MB) based on ESP32 rev id
-    micropy_hw_flash_size = (esp_get_revision() > 0 ? 0x800000 : 0x400000);
+    // micropy_hw_flash_size = (esp_get_revision() > 0 ? 0x800000 : 0x400000);
+    
+    // ESP32-WROVER rev id  > 0 and Flash Size is 4MB
+    micropy_hw_flash_size = (esp_get_revision() > 0 ? 0x400000 : 0x400000);
 
     // propagating the Flash Size in the global variable (used in multiple IDF modules)
     g_rom_flashchip.chip_size = micropy_hw_flash_size;

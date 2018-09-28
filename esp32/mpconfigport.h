@@ -240,7 +240,7 @@ extern const struct _mp_obj_module_t mp_module_uqueue;
 #define MICROPY_PORT_SFLASH_BLOCK_COUNT_4MB                     127
 #define MICROPY_PORT_SFLASH_BLOCK_COUNT_8MB                     1024
 
-#define DEFAULT_AP_PASSWORD                                     "www.pycom.io"
+#define DEFAULT_AP_PASSWORD                                     "00000000"
 #define DEFAULT_AP_CHANNEL                                      (6)
 
 #define MICROPY_FIRST_GEN_ANT_SELECT_PIN_NUM                    (16)

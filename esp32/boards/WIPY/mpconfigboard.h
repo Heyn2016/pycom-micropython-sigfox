@@ -9,12 +9,12 @@
 
 #define WIPY
 
-#define MICROPY_HW_BOARD_NAME                                   "WiPy"
-#define MICROPY_PY_SYS_PLATFORM                                 "WiPy"
+#define MICROPY_HW_BOARD_NAME                                   "Hexin"
+#define MICROPY_PY_SYS_PLATFORM                                 "Hexin"
 #define MICROPY_HW_HB_PIN_NUM                                   (0)
 #define MICROPY_HW_SAFE_PIN_NUM                                 (21)
 
-#define DEFAULT_AP_SSID                                         "wipy-wlan"
+#define DEFAULT_AP_SSID                                         "Hexin-wlan"
 
 #define MICROPY_HW_FLASH_SIZE                                   (4 * 1024 * 1024)
 

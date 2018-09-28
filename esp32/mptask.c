@@ -87,7 +87,7 @@ extern void modpycom_init0(void);
 /******************************************************************************
  DECLARE PRIVATE CONSTANTS
  ******************************************************************************/
-#define GC_POOL_SIZE_BYTES                                          (67 * 1024)
+#define GC_POOL_SIZE_BYTES                                          (96 * 1024)
 #define GC_POOL_SIZE_BYTES_PSRAM                                    ((2048 + 512) * 1024)
 
 /******************************************************************************
@@ -443,9 +443,9 @@ STATIC void mptask_update_lpwan_mac_address (void) {
 #endif
 
 STATIC void mptask_enable_wifi_ap (void) {
-	uint8_t wifi_ssid[32];
+	uint8_t wifi_ssid[32] = { 0x00 };
 	config_get_wifi_ssid(wifi_ssid);
-	uint8_t wifi_pwd[64];
+	uint8_t wifi_pwd[64]  = { 0x00 };
 	config_get_wifi_pwd(wifi_pwd);
     wlan_setup (WIFI_MODE_AP, (wifi_ssid[0]==0x00) ? DEFAULT_AP_SSID : (const char*) wifi_ssid , WIFI_AUTH_WPA2_PSK, (wifi_pwd[0]==0x00) ? DEFAULT_AP_PASSWORD : (const char*) wifi_pwd ,
                 DEFAULT_AP_CHANNEL, ANTENNA_TYPE_INTERNAL, (wifi_ssid[0]==0x00) ? true:false, false);
