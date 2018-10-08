@@ -80,7 +80,7 @@ LIBS = -L$(ESP_IDF_COMP_PATH)/esp32/lib -L$(ESP_IDF_COMP_PATH)/esp32/ld -L$(ESP_
        -lsigfox -lspi_flash -lnvs_flash -lgcc -lnghttp -ldriver -lesp32 -lexpat -lpthread -lesp_adc_cal \
        $(ESP_IDF_COMP_PATH)/newlib/lib/libm-psram-workaround.a \
        $(ESP_IDF_COMP_PATH)/newlib/lib/libc-psram-workaround.a \
-       -lfreertos -ljson -ljsmn -llwip -lnewlib -lvfs -lopenssl -lmbedtls -lwpa_supplicant \
+       -lfreertos -ljson -ljsmn -llwip -lnewlib -lvfs -lopenssl -lmbedtls -lwpa_supplicant -lmagicrf\
        -lxtensa-debug-module -lbt -lsdmmc -lsoc -lheap -lbootloader_support -lmicro-ecc -u ld_include_panic_highint_hdl \
 
 ifeq ($(BOARD), $(filter $(BOARD), FIPY))

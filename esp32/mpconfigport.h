@@ -120,6 +120,8 @@
 #define MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE        (0)
 #define MICROPY_KBD_EXCEPTION                       (1)
 
+#define MICROPY_PY_MAGICRF_M100                     (1)
+
 #ifndef BOOTLOADER_BUILD
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -171,6 +173,7 @@ extern const struct _mp_obj_module_t mp_module_uhashlib;
 extern const struct _mp_obj_module_t module_ucrypto;
 extern const struct _mp_obj_module_t mp_module_ussl;
 extern const struct _mp_obj_module_t mp_module_uqueue;
+extern const struct _mp_obj_module_t mp_module_m100;
 
 #define MICROPY_PORT_BUILTIN_MODULES \
     { MP_OBJ_NEW_QSTR(MP_QSTR_umachine),        (mp_obj_t)&machine_module },      \
@@ -186,6 +189,7 @@ extern const struct _mp_obj_module_t mp_module_uqueue;
     { MP_OBJ_NEW_QSTR(MP_QSTR_ussl),            (mp_obj_t)&mp_module_ussl },      \
     { MP_OBJ_NEW_QSTR(MP_QSTR_uerrno),          (mp_obj_t)&mp_module_uerrno },    \
     { MP_OBJ_NEW_QSTR(MP_QSTR_uqueue),          (mp_obj_t)&mp_module_uqueue },    \
+    { MP_OBJ_NEW_QSTR(MP_QSTR_m100),            (mp_obj_t)&mp_module_m100 },      \
 
 #define MICROPY_PORT_BUILTIN_MODULE_WEAK_LINKS \
     { MP_OBJ_NEW_QSTR(MP_QSTR_machine),         (mp_obj_t)&machine_module },      \
@@ -202,6 +206,7 @@ extern const struct _mp_obj_module_t mp_module_uqueue;
     { MP_OBJ_NEW_QSTR(MP_QSTR_ssl),             (mp_obj_t)&mp_module_ussl },      \
     { MP_OBJ_NEW_QSTR(MP_QSTR_errno),           (mp_obj_t)&mp_module_uerrno },    \
     { MP_OBJ_NEW_QSTR(MP_QSTR_queue),           (mp_obj_t)&mp_module_uqueue },    \
+    { MP_OBJ_NEW_QSTR(MP_QSTR_m100),            (mp_obj_t)&mp_module_m100 },      \
 
 // extra constants
 #define MICROPY_PORT_CONSTANTS \

@@ -204,7 +204,7 @@ def main():
     cmd_parser.add_argument('--table', default=None, help='the path to the partitions table')
     cmd_parser.add_argument('--app', default=None, help='the path to the application binary')
     cmd_parser.add_argument('--macs', default="macs.db", help='the path to the MAC addresses database')
-    cmd_parser.add_argument('--ports', default=['/dev/ttyUSB0'], nargs='+', help="the serial ports of the ESP32's to program")
+    cmd_parser.add_argument('--ports', default=['/dev/ttyACM0'], nargs='+', help="the serial ports of the ESP32's to program")
     cmd_parser.add_argument('--erase', default=None, help='set to True to erase the boards first')
     cmd_parser.add_argument('--qa', action='store_true', help='just do some quality asurance test')
     cmd_parser.add_argument('--board', default='LoPy', help='identifies the board to be flashed and tested')

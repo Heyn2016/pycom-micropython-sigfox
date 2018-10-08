@@ -140,6 +140,7 @@ APP_MODS_SRC_C = $(addprefix mods/,\
 	machwdt.c \
 	machrmt.c \
 	lwipsocket.c \
+	modm100.c \
 	)
 
 APP_MODS_LORA_SRC_C = $(addprefix mods/,\
@@ -397,8 +398,8 @@ PART_BIN_ENCRYPT = $(PART_BIN)_enc
 APP_BIN_ENCRYPT = $(APP_BIN)_enc_0x10000
 APP_BIN_ENCRYPT_2 = $(APP_BIN)_enc_0x1A0000
 
-ESPPORT ?= /dev/ttyUSB0
-ESPBAUD ?= 921600
+ESPPORT ?= /dev/ttyACM0
+ESPBAUD ?= 115200
 
 FLASH_SIZE = detect
 ESPFLASHFREQ = 80m
