@@ -116,6 +116,6 @@ extern const mp_obj_module_t mp_module_websocket;
 extern const mp_obj_module_t mp_module_webrepl;
 extern const mp_obj_module_t mp_module_framebuf;
 extern const mp_obj_module_t mp_module_btree;
-extern const mp_obj_module_t mp_module_m100;
+extern const mp_obj_module_t mp_module_magicrf;
 
 #endif // __MICROPY_INCLUDED_PY_BUILTIN_H__

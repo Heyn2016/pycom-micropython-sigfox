@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 
 #include "py/mpconfig.h"
 #include "py/obj.h"
@@ -11,6 +12,7 @@
 #include "readline.h"
 #include "serverstask.h"
 #include "mpexception.h"
+#include "mpirq.h"
 
 #include "esp_heap_caps.h"
 #include "sdkconfig.h"
@@ -23,59 +25,213 @@
 #include "esp_attr.h"
 #include "esp_intr.h"
 
+#include "driver/uart.h"
+#include "driver/gpio.h"
+
 #include "rom/ets_sys.h"
 #include "soc/uart_struct.h"
 #include "soc/dport_reg.h"
 #include "soc/gpio_sig_map.h"
 
 
+#include "machpin.h"
+#include "pins.h"
+
 #include "modm100.h"
 
-#define HEXIN_M100_BUFFER_MAX_SIZE         (128)
 
-STATIC mp_obj_t mod_m100_rf_power(size_t n_args, const mp_obj_t *args) {
-    uint32_t ret = 0;
-    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+#define MICROPY_M100_TX1_PIN                 (&PIN_MODULE_P3)    //GPIO4  -> TX
+#define MICROPY_M100_RX1_PIN                 (&PIN_MODULE_P4)    //GPIO15 -> RX
 
-    if (n_args == 0) {
-        ret = getRFPower(param);
-    } else {
-        ret = setRFPower(mp_obj_get_int(args[0]), param);
+#define MICROPY_M100_TX2_PIN                 (&PIN_MODULE_P8)    //GPIO2  -> TX
+#define MICROPY_M100_RX2_PIN                 (&PIN_MODULE_P9)    //GPIO12 -> RX
+
+
+/******************************************************************************
+ DECLARE PRIVATE DATA
+ ******************************************************************************/
+
+TaskHandle_t xM100TaskHandle;
+
+static uint8_t          uart_port           = 1;
+static uart_dev_t*      uart_driver_m100    = &UART1;
+static uart_config_t    m100_uart_config;
+
+static m100_obj_t m100_obj = { .handler     = mp_const_none,
+                               .handler_arg = mp_const_none,
+                               .init        = false };
+
+const mp_obj_type_t m100_type;
+
+// this function will be called by the interrupt thread
+STATIC void m100_payload_callback_handler(void *arg) {
+    m100_obj_t *self = arg;
+
+    if (self->handler && self->handler != mp_const_none) {
+        mp_call_function_1(self->handler, self->handler_arg);
     }
-
-    return mp_obj_new_bytes((byte *)&param, ret);
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_m100_rf_power_obj, 0, 1, mod_m100_rf_power);
 
 
-STATIC mp_obj_t mod_m100_query(size_t n_args, const mp_obj_t *args) {
-    uint32_t ret = 0;
-    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+static void TASK_M100 (void *pvParameters) {
+    size_t   length = 0;
+    uint8_t  pos    = 0, command = 0;
+    uint32_t size   = 0;
+    volatile rx_state_machine_t state = STATE_HEAD;
+    uint8_t  rx_buff[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
-    if (n_args == 0) {
-        ret = query(1, param);
-    } else {
-        uint32_t loop = mp_obj_get_int(args[0]);
-        if (loop > 65535) {
-            mp_raise_ValueError(mpexception_value_invalid_arguments);
+    while (1) {
+        uart_get_buffered_data_len( uart_port, &length );
+
+        if ( 0 == length ) {
+            vTaskDelay (2 / portTICK_PERIOD_MS);
+            continue;
         }
-        ret = query(loop, param);
+
+        // mp_printf(&mp_plat_print, "uart_get_buffered_data_len = %d\n", length);
+
+        switch ( state ) {  /* STATE MACHINE */
+
+            case STATE_HEAD:
+                for ( pos=0; pos <length; pos++ ) {
+                    uart_read_bytes(uart_port, rx_buff + HEAD_OFFSET, 1, 0);
+                    if ( rx_buff[HEAD_OFFSET] == HEXIN_MAGICRF_HEAD ) {
+                        state = STATE_TYPE;
+                        break;
+                    }
+                }
+                break;
+
+            case STATE_TYPE:
+                uart_read_bytes(uart_port, rx_buff + TYPE_OFFSET,    1, 0);
+                state = STATE_COMD;
+                break;
+
+            case STATE_COMD:
+                uart_read_bytes(uart_port, rx_buff + COMMAND_OFFSET, 1, 0);
+                state = STATE_SIZE;
+                break;
+
+            case STATE_SIZE:
+                if ( length >= 2 ) {
+                    uart_read_bytes(uart_port, rx_buff + LENGTH_MSB_OFFSET, 2, 0);
+                    size  = HEXIN_UCHAR2USHORT(rx_buff[LENGTH_MSB_OFFSET], rx_buff[LENGTH_LSB_OFFSET]);
+                    state = STATE_DATA;
+                }
+                break;
+
+            case STATE_DATA:
+                if ( length < (size + 2) ) {
+                    break;
+                }
+
+                uart_read_bytes(uart_port, rx_buff + PAYLOAD_OFFSET, size + 2, 0);
+                command = unpackFrame( rx_buff, m100_obj.value, &size );
+                if ( (0 == command) || (0xFF == command) ) {
+                    state = STATE_HEAD;
+                    break;
+                }
+
+                // mp_printf(&mp_plat_print, "trigger = %02X\n", m100_obj.trigger );
+                // mp_printf(&mp_plat_print, "command = %02X\n", command );
+
+                if ( m100_obj.trigger == command ) {
+                    m100_obj.value_len = size;
+                    mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
+                }
+
+                state = STATE_HEAD;
+                break;
+
+            default:
+                state = STATE_HEAD;
+                break;
+        } /* End STATE MACHINE */
+    }
+}
+
+/// \method callback(trigger, handler, arg)
+STATIC mp_obj_t mod_m100_callback(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    STATIC const mp_arg_t allowed_args[] = {
+        { MP_QSTR_trigger,      MP_ARG_REQUIRED | MP_ARG_OBJ,   },
+        { MP_QSTR_handler,      MP_ARG_OBJ,     {.u_obj = mp_const_none} },
+        { MP_QSTR_arg,          MP_ARG_OBJ,     {.u_obj = mp_const_none} },
+    };
+
+    // parse arguments
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+    m100_obj_t *self = pos_args[0];
+
+    if ( (args[0].u_obj != mp_const_none) && (args[1].u_obj != mp_const_none) ) {
+        self->trigger = mp_obj_get_int(args[0].u_obj);
+        self->handler = args[1].u_obj;
+        mp_irq_add(self, args[1].u_obj);
+        if (args[2].u_obj == mp_const_none) {
+            self->handler_arg = self;
+        } else {
+            self->handler_arg = args[2].u_obj;
+        }
+    } else {
+        self->trigger = 0;
+        mp_irq_remove(self);
+        INTERRUPT_OBJ_CLEAN(self);
     }
 
-    return mp_obj_new_bytes((byte *)&param, ret);
+    return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_m100_query_obj, 0, 1, mod_m100_query);
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_callback_obj, 1, mod_m100_callback);
 
 
-STATIC mp_obj_t mod_m100_stop( void ) {
+STATIC mp_obj_t mod_m100_rf_power(mp_obj_t self_in, mp_obj_t rfpower) {
+    uint32_t ret = 0;
+    float    power = mp_obj_get_float(rfpower);
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+
+    if ( (power > 26.0) || ( power <= 0.0 ) ) {
+        mp_raise_ValueError(mpexception_value_invalid_arguments);
+    }
+
+    ret = setPaPower(power, param);
+    uart_write_bytes(uart_port, (char*)(param), ret);
+
+    return mp_const_true;
+    // return mp_obj_new_bytes((byte *)&param, ret);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_2(mod_m100_rf_power_obj, mod_m100_rf_power);
+
+
+STATIC mp_obj_t mod_m100_query(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_loop,     MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 1} },
+    };
+    
+    uint32_t ret = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+
+    if ( args[0].u_int > 65535 ) {
+        mp_raise_ValueError(mpexception_value_invalid_arguments);
+    }
+    ret = query(args[0].u_int, param);
+    uart_write_bytes(uart_port, (char*)(param), ret);
+    return mp_const_true;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_query_obj, 1, mod_m100_query);
+
+
+STATIC mp_obj_t mod_m100_stop( mp_obj_t self_in ) {
     uint32_t ret = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
     ret = stop(param);
 
-    return mp_obj_new_bytes((byte *)&param, ret);
+    uart_write_bytes(uart_port, (char*)(param), ret);
+    return mp_const_true;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_0(mod_m100_stop_obj, mod_m100_stop);
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_stop_obj, mod_m100_stop);
 
 
 STATIC mp_obj_t mod_m100_param(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
@@ -87,30 +243,151 @@ STATIC mp_obj_t mod_m100_param(mp_uint_t n_args, const mp_obj_t *pos_args, mp_ma
     };
 
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
-    mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
 
     uint32_t ret = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
     ret = setQueryParam(args[0].u_int, args[1].u_int, args[2].u_int, args[3].u_int, param);
 
-    return mp_obj_new_bytes((byte *)&param, ret);
+    uart_write_bytes(uart_port, (char*)(param), ret);
+    return mp_const_true;
 }
 
-STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_param_obj, 0, mod_m100_param);
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_param_obj, 1, mod_m100_param);
 
 
-STATIC const mp_rom_map_elem_t mp_module_m100_globals_table[] = {
-    { MP_OBJ_NEW_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR_m100) },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_power),       MP_ROM_PTR(&mod_m100_rf_power_obj) },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_query),       MP_ROM_PTR(&mod_m100_query_obj) },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_stop),        MP_ROM_PTR(&mod_m100_stop_obj)  },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_param),       MP_ROM_PTR(&mod_m100_param_obj) },
+STATIC mp_obj_t m100_init_helper(m100_obj_t *self, const mp_arg_val_t *args) {
+    // mp_printf(&mp_plat_print, "m100 port = %d\n", args[0].u_int);
+    // mp_printf(&mp_plat_print, "m100 baud = %d\n", args[1].u_int);
+
+    uart_port = args[0].u_int;
+
+    if ( (uart_port < 0) || (uart_port > 2) ) {
+        uart_port = 1;
+    }
+
+    uart_driver_delete(uart_port);
+
+    m100_uart_config.baud_rate = args[1].u_int;
+    m100_uart_config.data_bits = UART_DATA_8_BITS;
+    m100_uart_config.parity    = UART_PARITY_DISABLE;
+    m100_uart_config.stop_bits = UART_STOP_BITS_1;
+    m100_uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+    m100_uart_config.rx_flow_ctrl_thresh = 64;
+
+    uart_param_config(uart_port, &m100_uart_config);
+
+    pin_deassign(MICROPY_M100_TX1_PIN);
+    gpio_pullup_dis(MICROPY_M100_TX1_PIN->pin_number);
+
+    pin_deassign(MICROPY_M100_RX1_PIN);
+    gpio_pullup_dis(MICROPY_M100_RX1_PIN->pin_number);
+
+    pin_config(MICROPY_M100_TX1_PIN, -1, U1TXD_OUT_IDX, GPIO_MODE_OUTPUT, MACHPIN_PULL_NONE, 1);
+    pin_config(MICROPY_M100_RX1_PIN, U1RXD_IN_IDX, -1, GPIO_MODE_INPUT, MACHPIN_PULL_NONE, 1);
+    
+    uart_driver_install(uart_port, 2048, 2048, 0, NULL, 0, NULL);
+
+    switch( uart_port ) {
+        case 0:
+            uart_driver_m100 = &UART0;
+            break;
+        case 1:
+            uart_driver_m100 = &UART1;
+            break;
+        case 2:
+            uart_driver_m100 = &UART2;
+            break;            
+        default:
+            uart_driver_m100 = &UART1;
+            break;
+    }
+
+    // disable the delay between transfers
+    uart_driver_m100->idle_conf.tx_idle_num = 0;
+
+    // configure the rx timeout threshold
+    uart_driver_m100->conf1.rx_tout_thrhd = 10 & UART_RX_TOUT_THRHD_V;
+
+    xTaskCreatePinnedToCore(TASK_M100, "M100Module", 4096 / sizeof(StackType_t), NULL, 7, &xM100TaskHandle, 1);
+
+
+    return mp_const_none;
+}
+
+STATIC const mp_arg_t m100_init_args[] = {
+    { MP_QSTR_id,                                MP_ARG_INT,        {.u_int = 0} },
+    { MP_QSTR_port,                              MP_ARG_INT,        {.u_int = 1} },
+    { MP_QSTR_baudrate,                          MP_ARG_INT,        {.u_int = 115200} },
 };
 
-STATIC MP_DEFINE_CONST_DICT(mp_module_m100_globals, mp_module_m100_globals_table);
+STATIC mp_obj_t m100_make_new(const mp_obj_type_t *type, mp_uint_t n_args, mp_uint_t n_kw, const mp_obj_t *all_args) {
 
-const mp_obj_module_t mp_module_m100 = {
+    // parse args
+    mp_map_t kw_args;
+    mp_map_init_fixed_table(&kw_args, n_kw, all_args + n_args);
+    mp_arg_val_t args[MP_ARRAY_SIZE(m100_init_args)];
+    mp_arg_parse_all(n_args, all_args, &kw_args, MP_ARRAY_SIZE(args), m100_init_args, args);
+
+    // check the peripheral id
+    if (args[0].u_int != 0) {
+        nlr_raise(mp_obj_new_exception_msg(&mp_type_OSError, mpexception_os_resource_not_avaliable));
+    }
+
+    // setup the object
+    m100_obj_t *self = (m100_obj_t *)&m100_obj;
+    self->base.type = &m100_type;
+
+    // start the peripheral
+    m100_init_helper(self, &args[1]);
+
+    return (mp_obj_t)self;
+}
+
+//
+STATIC mp_obj_t m100_char_value(mp_obj_t self_in) {
+    m100_obj_t *self = self_in;
+    return mp_obj_new_bytes(self->value, self->value_len);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_value_obj, m100_char_value);
+
+
+STATIC const mp_map_elem_t m100_locals_dict_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR_power),                   (mp_obj_t)&mod_m100_rf_power_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_query),                   (mp_obj_t)&mod_m100_query_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_stop),                    (mp_obj_t)&mod_m100_stop_obj  },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_param),                   (mp_obj_t)&mod_m100_param_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_callback),                (mp_obj_t)&mod_m100_callback_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_value),                   (mp_obj_t)&mod_m100_value_obj },
+
+    // constants
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_QUERY),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_QUERY) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_STOP),            MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_STOP) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_PA_POWER),        MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_SET_RF_POWER) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_ERROR),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_ERROR) },
+
+};
+
+STATIC MP_DEFINE_CONST_DICT(m100_locals_dict, m100_locals_dict_table);
+
+const mp_obj_type_t m100_type = {
+    { &mp_type_type },
+    .name = MP_QSTR_m100,
+    .make_new = m100_make_new,
+    .locals_dict = (mp_obj_t)&m100_locals_dict,
+};
+
+/*****************************************************************************/
+
+STATIC const mp_rom_map_elem_t mp_module_magicrf_globals_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR_umagicrf) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_m100),        (mp_obj_t)&m100_type },
+};
+
+STATIC MP_DEFINE_CONST_DICT(mp_module_magicrf_globals, mp_module_magicrf_globals_table);
+
+const mp_obj_module_t mp_module_magicrf = {
     .base = { &mp_type_module },
-    .globals = (mp_obj_dict_t*)&mp_module_m100_globals,
+    .globals = (mp_obj_dict_t*)&mp_module_magicrf_globals,
 };
