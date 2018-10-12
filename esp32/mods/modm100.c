@@ -72,7 +72,6 @@ STATIC void m100_payload_callback_handler(void *arg) {
     }
 }
 
-
 static void TASK_M100 (void *pvParameters) {
     size_t   length = 0;
     uint8_t  pos    = 0, command = 0;
@@ -135,7 +134,7 @@ static void TASK_M100 (void *pvParameters) {
                 // mp_printf(&mp_plat_print, "trigger = %02X\n", m100_obj.trigger );
                 // mp_printf(&mp_plat_print, "command = %02X\n", command );
 
-                if ( m100_obj.trigger == command ) {
+                if ( ( m100_obj.trigger == command ) || ( HEXIN_MAGICRF_CMD_READ_DATA == command ) ) {
                     m100_obj.value_len = size;
                     mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
                 }
@@ -188,15 +187,10 @@ STATIC mp_obj_t mod_m100_rf_power(mp_obj_t self_in, mp_obj_t rfpower) {
     float    power = mp_obj_get_float(rfpower);
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
-    if ( (power > 26.0) || ( power <= 0.0 ) ) {
-        mp_raise_ValueError(mpexception_value_invalid_arguments);
-    }
-
     ret = setPaPower(power, param);
     uart_write_bytes(uart_port, (char*)(param), ret);
 
-    return mp_const_true;
-    // return mp_obj_new_bytes((byte *)&param, ret);
+    return mp_const_true; // return mp_obj_new_bytes((byte *)&param, ret);
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_2(mod_m100_rf_power_obj, mod_m100_rf_power);
 
@@ -205,7 +199,7 @@ STATIC mp_obj_t mod_m100_query(mp_uint_t n_args, const mp_obj_t *pos_args, mp_ma
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_loop,     MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 1} },
     };
-    
+
     uint32_t ret = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
@@ -286,7 +280,7 @@ STATIC mp_obj_t m100_init_helper(m100_obj_t *self, const mp_arg_val_t *args) {
 
     pin_config(MICROPY_M100_TX1_PIN, -1, U1TXD_OUT_IDX, GPIO_MODE_OUTPUT, MACHPIN_PULL_NONE, 1);
     pin_config(MICROPY_M100_RX1_PIN, U1RXD_IN_IDX, -1, GPIO_MODE_INPUT, MACHPIN_PULL_NONE, 1);
-    
+
     uart_driver_install(uart_port, 2048, 2048, 0, NULL, 0, NULL);
 
     switch( uart_port ) {
@@ -298,7 +292,7 @@ STATIC mp_obj_t m100_init_helper(m100_obj_t *self, const mp_arg_val_t *args) {
             break;
         case 2:
             uart_driver_m100 = &UART2;
-            break;            
+            break;
         default:
             uart_driver_m100 = &UART1;
             break;
@@ -353,6 +347,114 @@ STATIC mp_obj_t m100_char_value(mp_obj_t self_in) {
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_value_obj, m100_char_value);
 
 
+STATIC mp_obj_t mod_m100_select(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_epc,     MP_ARG_REQUIRED | MP_ARG_OBJ, },
+        { MP_QSTR_target,  MP_ARG_KW_ONLY  | MP_ARG_INT,  {.u_int  = 0} },
+        { MP_QSTR_action,  MP_ARG_KW_ONLY  | MP_ARG_INT,  {.u_int  = 0} },
+        { MP_QSTR_bank,    MP_ARG_KW_ONLY  | MP_ARG_INT,  {.u_int  = 1} },
+        { MP_QSTR_ptr,     MP_ARG_KW_ONLY  | MP_ARG_INT,  {.u_int  = 0x00000020} },
+        { MP_QSTR_truncate,MP_ARG_KW_ONLY  | MP_ARG_BOOL, {.u_bool = false} },
+    };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+
+    const char *epc   = mp_obj_str_get_str(args[0].u_obj);
+    uint8_t  target   = (args[1].u_int & 0x07) << 5;    // max 3bit
+    uint8_t  action   = (args[2].u_int & 0x07) << 3;    // max 3bit
+    uint8_t  bank     = (args[3].u_int & 0x03);         // max 2bit
+    uint32_t ptr      = (args[4].u_int);
+    uint8_t  truncate = (args[5].u_bool == false) ? 0x00 : 0x01;
+
+    uint32_t ret    = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+
+    ret = setSelectParam( target|action|bank, ptr, epc, strlen(epc), 1, truncate, param );
+    uart_write_bytes(uart_port, (char*)(param), ret);
+
+    // return mp_const_false;
+    return mp_obj_new_bytes((byte *)&param, ret);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_select_obj, 1, mod_m100_select);
+
+
+STATIC mp_obj_t mod_m100_read_data(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_bank,    MP_ARG_REQUIRED | MP_ARG_INT,  },
+        { MP_QSTR_pwd,     MP_ARG_KW_ONLY  | MP_ARG_OBJ,  {.u_obj  = MP_OBJ_NULL}},
+        { MP_QSTR_addr,    MP_ARG_KW_ONLY  | MP_ARG_INT,  {.u_int  = 0x0000} },
+        { MP_QSTR_length,  MP_ARG_KW_ONLY  | MP_ARG_INT,  {.u_int  = 0x0002} },
+    };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+
+    uint8_t  bank     = (args[0].u_int & 0x03);
+    const char *pwd   = (args[1].u_obj == MP_OBJ_NULL) ? "00000000" : mp_obj_str_get_str(args[1].u_obj);
+    uint16_t addr     = (args[2].u_int);
+    uint16_t length   = (args[3].u_int);
+
+    // TODO : data type is bytes or hex; (2018/10/12)
+    if ( MP_OBJ_IS_TYPE(args[1].u_obj, &mp_type_bytes) ) {
+        mp_raise_ValueError("Invalid password, password must be an string.");
+    }
+    // END
+    if ( strlen(pwd) != 8 ) {
+        mp_raise_ValueError("Invalid password, password must be 8 Bytes");
+    }
+
+    uint32_t ret    = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+    ret = readData( (const unsigned char *)pwd, 1, (module_memory_bank_t)bank, addr, length, param );
+    uart_write_bytes(uart_port, (char*)(param), ret);
+
+    // return mp_const_false;
+    return mp_obj_new_bytes((byte *)&param, ret);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_read_data_obj, 1, mod_m100_read_data);
+
+
+STATIC mp_obj_t mod_m100_write_data(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_bank,    MP_ARG_REQUIRED | MP_ARG_INT,  },
+        { MP_QSTR_data,    MP_ARG_REQUIRED | MP_ARG_KW_ONLY | MP_ARG_OBJ,  {.u_obj  = MP_OBJ_NULL} },
+        { MP_QSTR_pwd,     MP_ARG_KW_ONLY  | MP_ARG_OBJ,  {.u_obj  = MP_OBJ_NULL} },
+        { MP_QSTR_addr,    MP_ARG_KW_ONLY  | MP_ARG_INT,  {.u_int  = 0x0000} },
+    };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+
+    uint8_t  bank     = (args[0].u_int & 0x03);
+    const char *data  = mp_obj_str_get_str(args[1].u_obj);
+    const char *pwd   = (args[2].u_obj == MP_OBJ_NULL) ? "00000000" : mp_obj_str_get_str(args[2].u_obj);
+    uint16_t addr     = (args[3].u_int);
+
+    // TODO : data type is bytes or hex; (2018/10/12)
+    if ( MP_OBJ_IS_TYPE(args[1].u_obj, &mp_type_bytes) || MP_OBJ_IS_TYPE(args[2].u_obj, &mp_type_bytes) ) {
+        mp_raise_ValueError("Invalid data or password, data or password must be an string.");
+    }
+    // END
+
+    if ( strlen(pwd) != 8 ) {
+        mp_raise_ValueError("Invalid password, password must be 8 Bytes");
+    }
+
+    if ( (strlen(data) % 4) != 0 ) {
+        mp_raise_ValueError("Invalid data, data must be an integer multiple of 4bytes string.");
+    }
+
+    uint32_t ret    = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+    ret = writeData( (const unsigned char *)pwd, 1, (module_memory_bank_t)bank, addr, strlen(data), (unsigned char *)data, param );
+    uart_write_bytes(uart_port, (char*)(param), ret);
+
+    return mp_obj_new_bytes((byte *)&param, ret);
+}
+
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_write_data_obj, 1, mod_m100_write_data);
+
 STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_power),                   (mp_obj_t)&mod_m100_rf_power_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_query),                   (mp_obj_t)&mod_m100_query_obj },
@@ -360,6 +462,9 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_param),                   (mp_obj_t)&mod_m100_param_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_callback),                (mp_obj_t)&mod_m100_callback_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_value),                   (mp_obj_t)&mod_m100_value_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_select),                  (mp_obj_t)&mod_m100_select_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_read),                    (mp_obj_t)&mod_m100_read_data_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_write),                   (mp_obj_t)&mod_m100_write_data_obj },
 
     // constants
     { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_QUERY),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_QUERY) },

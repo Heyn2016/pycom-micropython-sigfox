@@ -47,6 +47,14 @@ typedef enum {
     PAYLOAD_OFFSET
 } request_packet_offset_t;
 
+typedef enum {
+    BANK_RFU = 0x00,
+    BANK_EPC,
+    BANK_TID,
+    BANK_USER,
+    BANK_MAX
+} module_memory_bank_t;
+
 
 unsigned int setPaPower( float  power,         unsigned char *pbuf );
 unsigned int getPaPower(                       unsigned char *pbuf );
@@ -58,11 +66,35 @@ unsigned int setQueryParam  ( unsigned char select,
                               unsigned char target,
                               unsigned char qvalue,
                               unsigned char *pbuf );
-unsigned int stop      (                       unsigned char *pbuf );
+
+unsigned int stop      (      unsigned char *pbuf );
 
 unsigned int unpackFrame    ( unsigned char *frame,
                               unsigned char *param,
                               unsigned int  *paramLength );
+
+unsigned int setSelectParam ( unsigned char select,      /* Target(3bit) + Action(3bit) + Membank(2bit) */
+                              unsigned int  ptr,         /* 4Bytes */
+                              const    char *mask,
+                              unsigned char maskLen,
+                              unsigned char maskflag,    /* Mask format. 0: Hex format; 1: String format. */
+                              unsigned char truncate,
+                              unsigned char *pbuf );
+
+unsigned int readData(        const unsigned char *pwd,    /* Access password. */
+                              unsigned char pwdflag,       /* Password format. 0: Hex format; 1: String format. */
+                              module_memory_bank_t bank,   /* Memory bank. */
+                              unsigned short sa,           /* Data address offset. */
+                              unsigned short dl,           /* Data length. */
+                              unsigned char *pbuf );
+
+unsigned int writeData(       const unsigned char *pwd,   /* Access password. */
+                              unsigned char pwdflag,      /* Password format. 0: Hex format; 1: String format. */
+                              module_memory_bank_t bank,  /* Memory bank. */
+                              unsigned short sa,          /* Data address offset. */
+                              unsigned short dl,          /* Data length. */
+                              unsigned char *dt,          /* Write data buffer. */
+                              unsigned char *pbuf );
 
 #define HEXIN_M100_BUFFER_MAX_SIZE          (128)
 
