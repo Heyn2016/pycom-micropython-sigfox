@@ -56,9 +56,16 @@ typedef enum {
 } module_memory_bank_t;
 
 
-unsigned int setPaPower( float  power,         unsigned char *pbuf );
-unsigned int getPaPower(                       unsigned char *pbuf );
-unsigned int query     ( unsigned short loop , unsigned char *pbuf );
+unsigned int setPaPower     ( float  power,         unsigned char *pbuf );
+unsigned int getPaPower     (                       unsigned char *pbuf );
+unsigned int query          ( unsigned short loop , unsigned char *pbuf );
+
+unsigned int setMode        ( unsigned char mode,   unsigned char *pbuf );
+unsigned int getRFChannel   (                       unsigned char *pbuf );
+unsigned int setRFChannel   ( unsigned char index,  unsigned char *pbuf );
+unsigned int setHFSS        ( unsigned char status, unsigned char *pbuf );
+unsigned int scanJammer     (                       unsigned char *pbuf );
+unsigned int testRSSI       (                       unsigned char *pbuf );
 
 unsigned int getQueryParam  ( unsigned char *pbuf );
 unsigned int setQueryParam  ( unsigned char select,
@@ -102,6 +109,8 @@ unsigned int writeEPC(        const unsigned char *pwd,   /* Access password. */
                               unsigned short dl,          /* Data length. */
                               unsigned char *pbuf );
 
+
+
 #define HEXIN_M100_BUFFER_MAX_SIZE          (128)
 
 /******************************************************************************
@@ -129,5 +138,10 @@ typedef enum {
     STATE_DATA,
     STATE_OVER,
 } rx_state_machine_t;
+
+typedef struct {
+    unsigned int  length;
+    unsigned char data[HEXIN_M100_BUFFER_MAX_SIZE];
+} m100_task_rsp_data_t;
 
 #endif /* MODM100_H */
