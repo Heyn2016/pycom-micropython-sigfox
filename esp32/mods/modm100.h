@@ -96,6 +96,12 @@ unsigned int writeData(       const unsigned char *pwd,   /* Access password. */
                               unsigned char *dt,          /* Write data buffer. */
                               unsigned char *pbuf );
 
+unsigned int writeEPC(        const unsigned char *pwd,   /* Access password. */
+                              unsigned char pwdflag,      /* Password format. 0: Hex format; 1: String format. */
+                              unsigned char *dt,          /* Write data buffer. */
+                              unsigned short dl,          /* Data length. */
+                              unsigned char *pbuf );
+
 #define HEXIN_M100_BUFFER_MAX_SIZE          (128)
 
 /******************************************************************************
@@ -109,6 +115,7 @@ typedef struct {
     uint32_t            trigger;
     bool                init;
     uint8_t             command;
+    uint8_t             errorcode;
     uint32_t            value_len;
     uint8_t             value[HEXIN_M100_BUFFER_MAX_SIZE];
 } m100_obj_t;

@@ -346,6 +346,13 @@ STATIC mp_obj_t m100_char_value(mp_obj_t self_in) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_value_obj, m100_char_value);
 
+//
+STATIC mp_obj_t m100_command_error(mp_obj_t self_in) {
+    m100_obj_t *self = self_in;
+    return mp_obj_new_int(self->errorcode);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_error_obj, m100_command_error);
+
 
 STATIC mp_obj_t mod_m100_select(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     static const mp_arg_t allowed_args[] = {
@@ -394,19 +401,25 @@ STATIC mp_obj_t mod_m100_read_data(mp_uint_t n_args, const mp_obj_t *pos_args, m
     const char *pwd   = (args[1].u_obj == MP_OBJ_NULL) ? "00000000" : mp_obj_str_get_str(args[1].u_obj);
     uint16_t addr     = (args[2].u_int);
     uint16_t length   = (args[3].u_int);
+    volatile unsigned char hexORstr = 1;    // 1 : string type. 0 : hex tpye.
 
-    // TODO : data type is bytes or hex; (2018/10/12)
-    if ( MP_OBJ_IS_TYPE(args[1].u_obj, &mp_type_bytes) ) {
-        mp_raise_ValueError("Invalid password, password must be an string.");
+    // TODO : data type is bytes or hex; (2018/10/15)
+    if (args[1].u_obj != MP_OBJ_NULL) {     // BUGFIED
+        if ( MP_OBJ_IS_TYPE(args[1].u_obj, &mp_type_bytes) ) {
+            hexORstr = 0;
+        } else {
+            hexORstr = 1;
+        }
     }
     // END
+
     if ( strlen(pwd) != 8 ) {
         mp_raise_ValueError("Invalid password, password must be 8 Bytes");
     }
 
     uint32_t ret    = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
-    ret = readData( (const unsigned char *)pwd, 1, (module_memory_bank_t)bank, addr, length, param );
+    ret = readData( (const unsigned char *)pwd, hexORstr, (module_memory_bank_t)bank, addr, length, param );
     uart_write_bytes(uart_port, (char*)(param), ret);
 
     // return mp_const_false;
@@ -426,14 +439,20 @@ STATIC mp_obj_t mod_m100_write_data(mp_uint_t n_args, const mp_obj_t *pos_args, 
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
 
+    mp_uint_t length  = 0;
     uint8_t  bank     = (args[0].u_int & 0x03);
-    const char *data  = mp_obj_str_get_str(args[1].u_obj);
+    const char *data  = mp_obj_str_get_data(args[1].u_obj, &length);
     const char *pwd   = (args[2].u_obj == MP_OBJ_NULL) ? "00000000" : mp_obj_str_get_str(args[2].u_obj);
     uint16_t addr     = (args[3].u_int);
+    volatile unsigned char hexORstr = 1;    // 1 : string type. 0 : hex tpye.
 
-    // TODO : data type is bytes or hex; (2018/10/12)
-    if ( MP_OBJ_IS_TYPE(args[1].u_obj, &mp_type_bytes) || MP_OBJ_IS_TYPE(args[2].u_obj, &mp_type_bytes) ) {
-        mp_raise_ValueError("Invalid data or password, data or password must be an string.");
+    // TODO : password type is bytes or hex; (2018/10/15)
+    if (args[2].u_obj != MP_OBJ_NULL) {
+        if ( MP_OBJ_IS_TYPE(args[2].u_obj, &mp_type_bytes) ) {
+            hexORstr = 0;
+        } else {
+            hexORstr = 1;
+        }
     }
     // END
 
@@ -441,19 +460,60 @@ STATIC mp_obj_t mod_m100_write_data(mp_uint_t n_args, const mp_obj_t *pos_args, 
         mp_raise_ValueError("Invalid password, password must be 8 Bytes");
     }
 
-    if ( (strlen(data) % 4) != 0 ) {
-        mp_raise_ValueError("Invalid data, data must be an integer multiple of 4bytes string.");
-    }
+    // mp_printf(&mp_plat_print, "write data length = %d\n", length);
+    // if ( (length % 2) != 0 ) {
+    //     mp_raise_ValueError("Invalid data, data must be an integer multiple of 2bytes.");
+    // }
 
     uint32_t ret    = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
-    ret = writeData( (const unsigned char *)pwd, 1, (module_memory_bank_t)bank, addr, strlen(data), (unsigned char *)data, param );
+    ret = writeData( (const unsigned char *)pwd, hexORstr, (module_memory_bank_t)bank, addr, length, (unsigned char *)data, param );
     uart_write_bytes(uart_port, (char*)(param), ret);
 
     return mp_obj_new_bytes((byte *)&param, ret);
 }
 
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_write_data_obj, 1, mod_m100_write_data);
+
+
+STATIC mp_obj_t mod_m100_write_epc_data(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_epc,     MP_ARG_REQUIRED | MP_ARG_OBJ,  },
+        { MP_QSTR_pwd,     MP_ARG_KW_ONLY  | MP_ARG_OBJ,  {.u_obj  = MP_OBJ_NULL} },
+    };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+
+    mp_uint_t epclen  = 0;
+    const char *epc   = mp_obj_str_get_data(args[0].u_obj, &epclen);
+    const char *pwd   = (args[1].u_obj == MP_OBJ_NULL) ? "00000000" : mp_obj_str_get_str(args[1].u_obj);
+    volatile unsigned char hexORstr = 1;    // 1 : string type. 0 : hex tpye.
+
+    // TODO : password type is bytes or hex; (2018/10/15)
+    if (args[1].u_obj != MP_OBJ_NULL) {
+        if ( MP_OBJ_IS_TYPE(args[1].u_obj, &mp_type_bytes) ) {
+            hexORstr = 0;
+        } else {
+            hexORstr = 1;
+        }
+    }
+    // END
+
+    if ( strlen(pwd) != 8 ) {
+        mp_raise_ValueError("Invalid password, password must be 8 Bytes");
+    }
+
+    uint32_t ret    = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+
+    ret = writeEPC((const unsigned char *)pwd, hexORstr, (unsigned char *)epc, epclen, param );
+    uart_write_bytes(uart_port, (char*)(param), ret);
+
+    return mp_obj_new_bytes((byte *)&param, ret);
+}
+
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_write_epc_data_obj, 1, mod_m100_write_epc_data);
 
 STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_power),                   (mp_obj_t)&mod_m100_rf_power_obj },
@@ -462,15 +522,22 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_param),                   (mp_obj_t)&mod_m100_param_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_callback),                (mp_obj_t)&mod_m100_callback_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_value),                   (mp_obj_t)&mod_m100_value_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_error),                   (mp_obj_t)&mod_m100_error_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_select),                  (mp_obj_t)&mod_m100_select_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_read),                    (mp_obj_t)&mod_m100_read_data_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_write),                   (mp_obj_t)&mod_m100_write_data_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_write_epc),               (mp_obj_t)&mod_m100_write_epc_data_obj },
 
     // constants
     { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_QUERY),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_QUERY) },
     { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_STOP),            MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_STOP) },
     { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_PA_POWER),        MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_SET_RF_POWER) },
     { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_ERROR),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_ERROR) },
+
+    { MP_OBJ_NEW_QSTR(MP_QSTR_BANK_RFU),                MP_OBJ_NEW_SMALL_INT(BANK_RFU)  },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_BANK_EPC),                MP_OBJ_NEW_SMALL_INT(BANK_EPC)  },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_BANK_TID),                MP_OBJ_NEW_SMALL_INT(BANK_TID)  },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_BANK_USER),               MP_OBJ_NEW_SMALL_INT(BANK_USER) },
 
 };
 
