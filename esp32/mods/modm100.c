@@ -75,7 +75,8 @@ STATIC void m100_payload_callback_handler(void *arg) {
 
 static void TASK_M100 (void *pvParameters) {
     size_t   length = 0;
-    uint8_t  pos    = 0, command = 0;
+    uint8_t  pos    = 0;
+    uint32_t ret    = 0;
     uint32_t size   = 0;
     volatile rx_state_machine_t state = STATE_HEAD;
     uint8_t  rx_buff[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
@@ -126,36 +127,19 @@ static void TASK_M100 (void *pvParameters) {
                 }
 
                 uart_read_bytes(uart_port, rx_buff + PAYLOAD_OFFSET, size + 2, 0);
-                command = unpackFrame( rx_buff, m100_obj.value, &size );
-                if ( (0 == command) || (0xFF == command) ) {
+                ret = unpackFrame( rx_buff, m100_obj.value, &size );
+                if ( ( HEXIN_ERROR == ret ) || ( HEXIN_MAGICRF_ERROR == ret ) ) {
                     state = STATE_HEAD;
                     break;
                 }
 
                 // mp_printf(&mp_plat_print, "trigger = %02X\n", m100_obj.trigger );
-                // mp_printf(&mp_plat_print, "command = %02X\n", command );
+                // mp_printf(&mp_plat_print, "command = %02X\n", ret );
 
-                if ( ( m100_obj.trigger == command ) || ( HEXIN_MAGICRF_CMD_READ_DATA == command ) ) {
+                if ( ( m100_obj.trigger & ret ) ) {
                     m100_obj.value_len = size;
+                    m100_obj.command   = ret;
                     mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
-                }
-
-                switch ( command ) {
-                    case HEXIN_MAGICRF_CMD_GET_RF_CHANNEL:
-                        m100_obj.command   = HEXIN_MAGICRF_CMD_GET_RF_CHANNEL;
-                        m100_obj.value_len = size;
-                        mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
-                        break;
-
-                    case HEXIN_MAGICRF_CMD_TEST_RSSI:
-                    case HEXIN_MAGICRF_CMD_TEST_SCANJAMMER:
-                        m100_obj.command   = command;
-                        m100_obj.value_len = size;
-                        mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
-                        break;
-
-                    default:
-                        break;
                 }
 
                 state = STATE_HEAD;
@@ -201,17 +185,21 @@ STATIC mp_obj_t mod_m100_callback(mp_uint_t n_args, const mp_obj_t *pos_args, mp
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_callback_obj, 1, mod_m100_callback);
 
 
-STATIC mp_obj_t mod_m100_rf_power(mp_obj_t self_in, mp_obj_t rfpower) {
-    uint32_t ret = 0;
-    float    power = mp_obj_get_float(rfpower);
+STATIC mp_obj_t mod_m100_rf_power(mp_uint_t n_args, const mp_obj_t *args) {
+    uint32_t ret    = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+    
+    if (n_args == 1) {
+        ret = getPaPower( param );
+    } else {
+        ret = setPaPower( mp_obj_get_float(args[1]), param );
+    }
 
-    ret = setPaPower(power, param);
     uart_write_bytes(uart_port, (char*)(param), ret);
-
-    return mp_const_true; // return mp_obj_new_bytes((byte *)&param, ret);
+    // return mp_obj_new_bytes((byte *)&param, ret);
+    return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_2(mod_m100_rf_power_obj, mod_m100_rf_power);
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_m100_rf_power_obj, 1, 2, mod_m100_rf_power);
 
 
 STATIC mp_obj_t mod_m100_query(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
@@ -407,8 +395,8 @@ STATIC mp_obj_t mod_m100_select(mp_uint_t n_args, const mp_obj_t *pos_args, mp_m
     ret = setSelectParam( target|action|bank, ptr, epc, strlen(epc), 1, truncate, param );
     uart_write_bytes(uart_port, (char*)(param), ret);
 
-    // return mp_const_false;
-    return mp_obj_new_bytes((byte *)&param, ret);
+    return mp_const_none;
+    // return mp_obj_new_bytes((byte *)&param, ret);
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_select_obj, 1, mod_m100_select);
 
@@ -592,6 +580,7 @@ STATIC mp_obj_t mod_m100_setchannel(mp_uint_t n_args, const mp_obj_t *pos_args, 
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_setchannel_obj, 1, mod_m100_setchannel);
 
+
 STATIC mp_obj_t mod_m100_hfss(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_mode,     MP_ARG_INT, {.u_int = 0} },
@@ -611,28 +600,69 @@ STATIC mp_obj_t mod_m100_hfss(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_hfss_obj, 1, mod_m100_hfss);
 
+
 STATIC mp_obj_t mod_m100_jammer( mp_obj_t self_in ) {
     uint32_t ret = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
-    ret = scanJammer(param);
-    uart_write_bytes(uart_port, (char*)(param), ret);
+    ret = scanJammer( param );
+    uart_write_bytes( uart_port, (char*)(param), ret );
 
     return mp_const_true;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_jammer_obj, mod_m100_jammer);
 
+
 STATIC mp_obj_t mod_m100_rssi( mp_obj_t self_in ) {
     uint32_t ret = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
-    ret = testRSSI(param);
-    uart_write_bytes(uart_port, (char*)(param), ret);
+    ret = testRSSI( param );
+    uart_write_bytes( uart_port, (char*)(param), ret );
 
     return mp_const_true;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_rssi_obj, mod_m100_rssi);
 
+
+STATIC mp_obj_t mod_m100_version(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_version,     MP_ARG_INT, {.u_int = 0} },
+    };
+
+    uint32_t ret = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+
+    if ( args[0].u_int > 2 ) {
+        mp_raise_ValueError(mpexception_value_invalid_arguments);
+    }
+    ret = version( args[0].u_int, param );
+    uart_write_bytes( uart_port, (char*)(param), ret );
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_version_obj, 1, mod_m100_version);
+
+
+STATIC mp_obj_t mod_m100_insert_rfchannel(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_start,     MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 1} },
+        { MP_QSTR_end,       MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 5} },
+    };
+
+    uint32_t ret = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(args), allowed_args, args);
+
+    ret = insertRFChannel( args[0].u_int, args[1].u_int, param );
+    uart_write_bytes( uart_port, (char*)(param), ret );
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_insert_rfchannel_obj, 1, mod_m100_insert_rfchannel);
 
 STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_power),                   (mp_obj_t)&mod_m100_rf_power_obj        },
@@ -653,6 +683,8 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_hfss),                    (mp_obj_t)&mod_m100_hfss_obj            },
     { MP_OBJ_NEW_QSTR(MP_QSTR_jammer),                  (mp_obj_t)&mod_m100_jammer_obj          },
     { MP_OBJ_NEW_QSTR(MP_QSTR_rssi),                    (mp_obj_t)&mod_m100_rssi_obj            },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_version),                 (mp_obj_t)&mod_m100_version_obj         },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_insert_rfchannel),        (mp_obj_t)&mod_m100_insert_rfchannel_obj},
 
     // constants
     { MP_OBJ_NEW_QSTR(MP_QSTR_PARAM_SELECT_ALL),        MP_OBJ_NEW_SMALL_INT(0)  },
@@ -667,10 +699,16 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_PARAM_TARGET_A),          MP_OBJ_NEW_SMALL_INT(0)  },
     { MP_OBJ_NEW_QSTR(MP_QSTR_PARAM_TARGET_B),          MP_OBJ_NEW_SMALL_INT(1)  },
 
-    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_QUERY),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_QUERY) },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_STOP),            MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_STOP) },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_PA_POWER),        MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_SET_RF_POWER) },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_ERROR),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CMD_ERROR) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_INFO),            MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_INFO) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_QUERY),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_QUERY) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_STOP),            MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_STOP) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_RSSI),            MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_TEST_RSSI) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_JAMMER),          MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_TEST_SCANJAMMER) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_GPIO),            MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_CTRL_IO) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_READ_DATA),       MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_READ_DATA) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_RF_CHANNEL),      MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_GET_RF_CHANNEL) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_PA_POWER),        MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_GET_RF_POWER) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_TRIGGER_ERROR),           MP_OBJ_NEW_SMALL_INT(HEXIN_MAGICRF_ERROR) },
 
     { MP_OBJ_NEW_QSTR(MP_QSTR_BANK_RFU),                MP_OBJ_NEW_SMALL_INT(BANK_RFU)  },
     { MP_OBJ_NEW_QSTR(MP_QSTR_BANK_EPC),                MP_OBJ_NEW_SMALL_INT(BANK_EPC)  },
@@ -682,6 +720,10 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
 
     { MP_OBJ_NEW_QSTR(MP_QSTR_HFSS_AUTO),               MP_OBJ_NEW_SMALL_INT(0xFF)      },
     { MP_OBJ_NEW_QSTR(MP_QSTR_HFSS_STOP),               MP_OBJ_NEW_SMALL_INT(0x00)      },
+
+    { MP_OBJ_NEW_QSTR(MP_QSTR_VERSION_HW),              MP_OBJ_NEW_SMALL_INT(0)         },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_VERSION_SW),              MP_OBJ_NEW_SMALL_INT(1)         },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_VERSION_MFG),             MP_OBJ_NEW_SMALL_INT(2)         },
 };
 
 STATIC MP_DEFINE_CONST_DICT(m100_locals_dict, m100_locals_dict_table);
@@ -693,11 +735,171 @@ const mp_obj_type_t m100_type = {
     .locals_dict = (mp_obj_t)&m100_locals_dict,
 };
 
-/*****************************************************************************/
+/*****************************************************************************************************************
+from magicrf import Pin
+*****************************************************************************************************************/
+
+const mp_obj_type_t m100_pin_type;
+
+#define M100_GPIO_MODE_INPUT            ( 0x00 )
+#define M100_GPIO_MODE_OUTPUT           ( 0x01 )
+
+#define M100PIN(p_pin_name, p_pin_number) \
+{ \
+    { &m100_pin_type }, \
+    .name           = MP_QSTR_ ## p_pin_name, \
+    .pin_number     = (p_pin_number), \
+    .mode           = (M100_GPIO_MODE_INPUT), \
+    .value          = (0), \
+}
+
+typedef struct {
+    mp_obj_base_t       base;
+    qstr                name;
+    mp_obj_t            handler;
+    mp_obj_t            handler_arg;
+    unsigned char       pin_number : 4;
+    unsigned char       mode       : 3;
+    unsigned char       value      : 1;
+} m100_pin_obj_t;
+
+
+m100_pin_obj_t pin_GPI1 = M100PIN(M100IO1 , 1);
+m100_pin_obj_t pin_GPI2 = M100PIN(M100IO2 , 2);
+m100_pin_obj_t pin_GPI3 = M100PIN(M100IO3 , 3);
+m100_pin_obj_t pin_GPI4 = M100PIN(M100IO4 , 4);
+
+
+STATIC DRAM_ATTR mp_map_elem_t m100_module_pins_locals_dict_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR_GPIO1    ), (mp_obj_t)&pin_GPI1  },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_GPIO2    ), (mp_obj_t)&pin_GPI2  },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_GPIO3    ), (mp_obj_t)&pin_GPI3  },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_GPIO4    ), (mp_obj_t)&pin_GPI4  },
+};
+MP_DEFINE_RAM_DICT(m100_module_pins_locals_dict, m100_module_pins_locals_dict_table);
+
+
+
+STATIC const mp_arg_t pin_init_args[] = {
+    { MP_QSTR_mode,                        MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
+};
+#define pin_INIT_NUM_ARGS MP_ARRAY_SIZE(pin_init_args)
+
+STATIC mp_obj_t pin_obj_init_helper(m100_pin_obj_t *self, mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    // parse args
+    mp_arg_val_t args[pin_INIT_NUM_ARGS];
+    mp_arg_parse_all(n_args, pos_args, kw_args, pin_INIT_NUM_ARGS, pin_init_args, args);
+
+    unsigned char mode = 0x00;
+    if (args[0].u_obj == MP_OBJ_NULL) {
+        mode = M100_GPIO_MODE_INPUT;
+    } else {
+        mode = mp_obj_get_int(args[0].u_obj) == M100_GPIO_MODE_INPUT ? M100_GPIO_MODE_INPUT : M100_GPIO_MODE_OUTPUT;
+    }
+
+    uint32_t ret    = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+
+    ret = gpio( self->pin_number, GPIO_TYPE_INIT, mode, param );
+    uart_write_bytes(uart_port, (char*)(param), ret);
+
+    return mp_const_none;
+}
+
+/******************************************************************************
+DEFINE PRIVATE FUNCTIONS
+ ******************************************************************************/
+STATIC m100_pin_obj_t *m100_pin_find_named_pin(const mp_obj_dict_t *named_pins, mp_obj_t name) {
+    mp_map_t *named_map = mp_obj_dict_get_map((mp_obj_t)named_pins);
+    mp_map_elem_t *named_elem = mp_map_lookup(named_map, name, MP_MAP_LOOKUP);
+    if (named_elem != NULL && named_elem->value != NULL) {
+        return named_elem->value;
+    }
+    return NULL;
+}
+
+m100_pin_obj_t *m100_pin_find( mp_obj_t user_obj ) {
+    m100_pin_obj_t *pin_obj;
+
+    // if a pin was provided, use it
+    if (MP_OBJ_IS_TYPE(user_obj, &m100_pin_type)) {
+        return user_obj;
+    }
+
+    // see if the pin name matches a expansion board pin
+    pin_obj = m100_pin_find_named_pin(&m100_module_pins_locals_dict, user_obj);
+    if (pin_obj) {
+        return pin_obj;
+    }
+
+    nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, mpexception_value_invalid_arguments));
+}
+
+STATIC mp_obj_t pin_make_new(const mp_obj_type_t *type, mp_uint_t n_args, mp_uint_t n_kw, const mp_obj_t *args) {
+    mp_arg_check_num(n_args, n_kw, 1, MP_OBJ_FUN_ARGS_MAX, true);
+
+    // Run an argument through the mapper and return the result.
+    m100_pin_obj_t *self = (m100_pin_obj_t *)m100_pin_find(args[0]);
+
+    mp_map_t kw_args;
+    mp_map_init_fixed_table(&kw_args, n_kw, args + n_args);
+    pin_obj_init_helper(self, n_args - 1, args + 1, &kw_args);
+
+    return (mp_obj_t)self;
+}
+
+STATIC mp_obj_t m100_pin_init(mp_uint_t n_args, const mp_obj_t *args, mp_map_t *kw_args) {
+    return pin_obj_init_helper(args[0], n_args - 1, args + 1, kw_args);
+}
+MP_DEFINE_CONST_FUN_OBJ_KW(m100_pin_init_obj, 1, m100_pin_init);
+
+STATIC mp_obj_t m100_pin_value(mp_uint_t n_args, const mp_obj_t *args) {
+    uint32_t ret    = 0;
+    uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+    m100_pin_obj_t *self = args[0];
+    
+    if (n_args == 1) {
+        if ( self->mode == M100_GPIO_MODE_OUTPUT ) {
+            return MP_OBJ_NEW_SMALL_INT(self->value);
+        }
+        ret = gpio( self->pin_number, GPIO_TYPE_READ, self->value, param );
+    } else {
+        self->value = mp_obj_is_true(args[1]);
+        ret = gpio( self->pin_number, GPIO_TYPE_WRITE, self->value, param );
+    }
+
+    uart_write_bytes(uart_port, (char*)(param), ret);
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(m100_pin_value_obj, 1, 2, m100_pin_value);
+
+
+STATIC const mp_map_elem_t pin_locals_dict_table[] = {
+    // instance methods
+    { MP_OBJ_NEW_QSTR(MP_QSTR_init),                    (mp_obj_t)&m100_pin_init_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_value),                   (mp_obj_t)&m100_pin_value_obj },
+
+    // class constants
+    { MP_OBJ_NEW_QSTR(MP_QSTR_IN),                      MP_OBJ_NEW_SMALL_INT(M100_GPIO_MODE_INPUT) },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_OUT),                     MP_OBJ_NEW_SMALL_INT(M100_GPIO_MODE_OUTPUT) },
+};
+
+STATIC MP_DEFINE_CONST_DICT(pin_locals_dict, pin_locals_dict_table);
+
+const mp_obj_type_t m100_pin_type = {
+    { &mp_type_type },
+    .name = MP_QSTR_Pin,
+    .make_new = pin_make_new,
+    .locals_dict = (mp_obj_t)&pin_locals_dict,
+};
+
+/****************************************************************************************************************/
+
 
 STATIC const mp_rom_map_elem_t mp_module_magicrf_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR_umagicrf) },
     { MP_OBJ_NEW_QSTR(MP_QSTR_m100),        (mp_obj_t)&m100_type },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_Pin ),        (mp_obj_t)&m100_pin_type  },
 };
 
 STATIC MP_DEFINE_CONST_DICT(mp_module_magicrf_globals, mp_module_magicrf_globals_table);
@@ -713,11 +915,10 @@ from magicrf import m100
 reader = m100()
 
 def uart_cb( char ):
-    # print(char.size())
     print(char.value())
 
 
-reader.callback(m100.TRIGGER_QUERY, uart_cb)
+reader.callback((m100.TRIGGER_QUERY | m100.TRIGGER_PA_POWER), uart_cb)
 
 reader.power(22.0)
 reader.mode(m100.MODE_HIGH_SENSITIVITY)
@@ -738,5 +939,18 @@ reader.hfss(m100.HFSS_STOP)
 reader.hfss(m100.HFSS_AUTO)
 reader.setchannel(1)
 reader.getchannel()
+
+reader.version(m100.VERSION_HW)
+reader.insert_rfchannel(start=1, end=5)
+
+from magicrf import Pin
+
+p1 = Pin('GPIO1', mode=Pin.IN)
+p2 = Pin('GPIO2', mode=Pin.IN)
+p3 = Pin('GPIO3', mode=Pin.OUT)
+p4 = Pin('GPIO4', mode=Pin.OUT)
+
+p1.value( )     # Read
+p3.value(1)     # Write
 
 */

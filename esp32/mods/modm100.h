@@ -5,34 +5,41 @@
 #define HEXIN_MAGICRF_TAIL                         0x7E
 
 
-#define HEXIN_MAGICRF_CMD_INFO                     0x03
-#define HEXIN_MAGICRF_CMD_QUERY                    0x22
-#define HEXIN_MAGICRF_CMD_MUL_QUERY                0x27
-#define HEXIN_MAGICRF_CMD_STOP                     0x28
-#define HEXIN_MAGICRF_CMD_SET_SELECT               0x0C
-#define HEXIN_MAGICRF_CMD_SEND_SELECT              0x12
-#define HEXIN_MAGICRF_CMD_READ_DATA                0x39
-#define HEXIN_MAGICRF_CMD_WRITE_DATA               0x49
-#define HEXIN_MAGICRF_CMD_LOCK                     0x82
-#define HEXIN_MAGICRF_CMD_KILL                     0x65
-#define HEXIN_MAGICRF_CMD_GET_QUERY                0x0D
-#define HEXIN_MAGICRF_CMD_SET_QUERY                0x0E
-#define HEXIN_MAGICRF_CMD_SET_REGION               0x07
-#define HEXIN_MAGICRF_CMD_SET_RF_CHANNEL           0xAB
-#define HEXIN_MAGICRF_CMD_GET_RF_CHANNEL           0xAA
-#define HEXIN_MAGICRF_CMD_SET_HFSS                 0xAD
-#define HEXIN_MAGICRF_CMD_GET_RF_POWER             0xB7
-#define HEXIN_MAGICRF_CMD_SET_RF_POWER             0xB6
-#define HEXIN_MAGICRF_CMD_SET_RF_CARRIER           0xB0
-#define HEXIN_MAGICRF_CMD_GET_RF_GAIN              0xF1
-#define HEXIN_MAGICRF_CMD_SET_RF_GAIN              0xF0
-#define HEXIN_MAGICRF_CMD_TEST_SCANJAMMER          0xF2
-#define HEXIN_MAGICRF_CMD_TEST_RSSI                0xF3
-#define HEXIN_MAGICRF_CMD_CTRL_IO                  0x1A
-#define HEXIN_MAGICRF_CMD_DEEP_SLEEP               0x17
-#define HEXIN_MAGICRF_CMD_DEEPSLEEP_TIME           0x1D
-#define HEXIN_MAGICRF_CMD_IDLE                     0x04
-#define HEXIN_MAGICRF_CMD_ERROR                    0xFF
+#define HEXIN_ERROR                                ( 0x00000000 )
+
+#define HEXIN_MAGICRF_BASE                         ( 0x00000001 )
+#define HEXIN_MAGICRF_INFO                         ( HEXIN_MAGICRF_BASE <<  0 )
+#define HEXIN_MAGICRF_QUERY                        ( HEXIN_MAGICRF_BASE <<  1 )
+#define HEXIN_MAGICRF_MUL_QUERY                    ( HEXIN_MAGICRF_BASE <<  2 )
+#define HEXIN_MAGICRF_STOP                         ( HEXIN_MAGICRF_BASE <<  3 )
+#define HEXIN_MAGICRF_SET_SELECT                   ( HEXIN_MAGICRF_BASE <<  4 )
+#define HEXIN_MAGICRF_SEND_SELECT                  ( HEXIN_MAGICRF_BASE <<  5 )
+#define HEXIN_MAGICRF_READ_DATA                    ( HEXIN_MAGICRF_BASE <<  6 )
+#define HEXIN_MAGICRF_WRITE_DATA                   ( HEXIN_MAGICRF_BASE <<  7 )
+#define HEXIN_MAGICRF_LOCK                         ( HEXIN_MAGICRF_BASE <<  8 )
+#define HEXIN_MAGICRF_KILL                         ( HEXIN_MAGICRF_BASE <<  9 )
+#define HEXIN_MAGICRF_GET_QUERY                    ( HEXIN_MAGICRF_BASE << 10 )
+#define HEXIN_MAGICRF_SET_QUERY                    ( HEXIN_MAGICRF_BASE << 11 )
+#define HEXIN_MAGICRF_SET_REGION                   ( HEXIN_MAGICRF_BASE << 12 )
+#define HEXIN_MAGICRF_INSERT_RF_CHANNEL            ( HEXIN_MAGICRF_BASE << 13 )
+#define HEXIN_MAGICRF_SET_RF_CHANNEL               ( HEXIN_MAGICRF_BASE << 14 )
+#define HEXIN_MAGICRF_GET_RF_CHANNEL               ( HEXIN_MAGICRF_BASE << 15 )
+#define HEXIN_MAGICRF_SET_HFSS                     ( HEXIN_MAGICRF_BASE << 16 )
+#define HEXIN_MAGICRF_GET_RF_POWER                 ( HEXIN_MAGICRF_BASE << 17 )
+#define HEXIN_MAGICRF_SET_RF_POWER                 ( HEXIN_MAGICRF_BASE << 18 )
+#define HEXIN_MAGICRF_SET_RF_CARRIER               ( HEXIN_MAGICRF_BASE << 19 )
+#define HEXIN_MAGICRF_GET_RF_GAIN                  ( HEXIN_MAGICRF_BASE << 20 )
+#define HEXIN_MAGICRF_SET_RF_GAIN                  ( HEXIN_MAGICRF_BASE << 21 )
+#define HEXIN_MAGICRF_TEST_SCANJAMMER              ( HEXIN_MAGICRF_BASE << 22 )
+#define HEXIN_MAGICRF_TEST_RSSI                    ( HEXIN_MAGICRF_BASE << 23 )
+#define HEXIN_MAGICRF_SET_MODE                     ( HEXIN_MAGICRF_BASE << 24 )
+#define HEXIN_MAGICRF_CTRL_IO                      ( HEXIN_MAGICRF_BASE << 25 )
+#define HEXIN_MAGICRF_DEEP_SLEEP                   ( HEXIN_MAGICRF_BASE << 26 )
+#define HEXIN_MAGICRF_DEEPSLEEP_TIME               ( HEXIN_MAGICRF_BASE << 27 )
+#define HEXIN_MAGICRF_IDLE                         ( HEXIN_MAGICRF_BASE << 28 )
+
+#define HEXIN_MAGICRF_NOTHING                      ( HEXIN_MAGICRF_BASE << 30 )
+#define HEXIN_MAGICRF_ERROR                        ( 0x10000000 )
 
 
 #define HEXIN_UCHAR2USHORT(msb, lsb)    ((((unsigned short)msb << 8) & 0xFF00) | \
@@ -55,7 +62,23 @@ typedef enum {
     BANK_MAX
 } module_memory_bank_t;
 
+typedef enum {
+    GPIO_PIN_1 = 0x01,
+    GPIO_PIN_2,
+    GPIO_PIN_3,
+    GPIO_PIN_4,
+    GPIO_PIN_MAX
+} module_gpio_pin_t;
 
+typedef enum {
+    GPIO_TYPE_INIT = 0x00,  /* Init GPIO direction  */
+    GPIO_TYPE_WRITE,        /* Write value to GPIO  */
+    GPIO_TYPE_READ,         /* Read value from GPIO */
+    GPIO_TYPE_MAX
+} module_gpio_type_t;
+
+
+unsigned int version        ( unsigned char param,  unsigned char *pbuf );
 unsigned int setPaPower     ( float  power,         unsigned char *pbuf );
 unsigned int getPaPower     (                       unsigned char *pbuf );
 unsigned int query          ( unsigned short loop , unsigned char *pbuf );
@@ -66,6 +89,11 @@ unsigned int setRFChannel   ( unsigned char index,  unsigned char *pbuf );
 unsigned int setHFSS        ( unsigned char status, unsigned char *pbuf );
 unsigned int scanJammer     (                       unsigned char *pbuf );
 unsigned int testRSSI       (                       unsigned char *pbuf );
+
+unsigned int gpio           ( module_gpio_pin_t  port,
+                              module_gpio_type_t type,
+                              unsigned char value,
+                              unsigned char *pbuf );
 
 unsigned int getQueryParam  ( unsigned char *pbuf );
 unsigned int setQueryParam  ( unsigned char select,
@@ -109,7 +137,9 @@ unsigned int writeEPC(        const unsigned char *pwd,   /* Access password. */
                               unsigned short dl,          /* Data length. */
                               unsigned char *pbuf );
 
-
+unsigned int insertRFChannel( unsigned char start,
+                              unsigned char stop,
+                              unsigned char *pbuf );
 
 #define HEXIN_M100_BUFFER_MAX_SIZE          (128)
 
