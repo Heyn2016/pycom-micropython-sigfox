@@ -142,21 +142,38 @@ unsigned int insertRFChannel( unsigned char start,
                               unsigned char *pbuf );
 
 #define HEXIN_M100_BUFFER_MAX_SIZE          (128)
-
+#define HEXIN_RING_BUFFER_MAX_SIZE          (1024)
 /******************************************************************************
  DEFINE PRIVATE TYPES
  ******************************************************************************/
+
+
+typedef struct
+{
+    uint8_t*  buffer;
+    uint32_t  size;
+    volatile uint32_t  head; /* Index of the buffer to read from */
+    volatile uint32_t  tail; /* Index of the buffer to write to */
+} hexin_ring_buffer_t;
+
+uint32_t __ring_buffer_init ( hexin_ring_buffer_t* ring_buffer, uint8_t* buffer, uint32_t buffer_size );
+uint32_t __ring_buffer_write( hexin_ring_buffer_t* ring_buffer, const uint8_t* data, uint32_t data_length );
+void     __ring_buffer_get_data( hexin_ring_buffer_t* ring_buffer, uint8_t** data, uint32_t* contiguous_bytes );
+void     __ring_buffer_read ( hexin_ring_buffer_t* ring_buffer, uint8_t* data, uint32_t data_length, uint32_t* number_of_bytes_read );
+uint32_t __ring_buffer_free_space( hexin_ring_buffer_t* ring_buffer );
+void     __ring_buffer_consume( hexin_ring_buffer_t* ring_buffer, uint32_t bytes_consumed );
+
 
 typedef struct {
     mp_obj_base_t       base;
     mp_obj_t            handler;
     mp_obj_t            handler_arg;
-    uint32_t            trigger;
     bool                init;
-    uint8_t             command;
-    uint8_t             errorcode;
-    uint32_t            value_len;
-    uint8_t             value[HEXIN_M100_BUFFER_MAX_SIZE];
+    unsigned int        trigger;
+    unsigned int        value_len;
+    unsigned char       command;
+    unsigned char       errorcode;
+    unsigned char       value[HEXIN_RING_BUFFER_MAX_SIZE];
 } m100_obj_t;
 
 
@@ -169,9 +186,5 @@ typedef enum {
     STATE_OVER,
 } rx_state_machine_t;
 
-typedef struct {
-    unsigned int  length;
-    unsigned char data[HEXIN_M100_BUFFER_MAX_SIZE];
-} m100_task_rsp_data_t;
 
 #endif /* MODM100_H */

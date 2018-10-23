@@ -1,3 +1,16 @@
+/*****************************************************************************************************************
+ *
+ * Copyright (c) 2018-2018, Hexin Technology Co. Ltd All rights reserved.
+ * Author  : Heyn (heyunhuan@gmail.com)
+ * Version : V1.4.0
+ * Web	   : http://www.hex-in.com
+ *
+ * LICENSING TERMS:
+ * ---------------
+ *                          2018/10/18 V1.4.0 [Heyn] Release.
+ *
+*****************************************************************************************************************/
+
 #include <stdint.h>
 #include <string.h>
 
@@ -51,8 +64,8 @@
  DECLARE PRIVATE DATA
  ******************************************************************************/
 
-TaskHandle_t            xM100TaskHandle;
-static QueueHandle_t    xRxQueue;
+TaskHandle_t                    xM100TaskHandle;
+static hexin_ring_buffer_t      xRingBuffer;
 
 static uint8_t          uart_port           = 1;
 static uart_dev_t*      uart_driver_m100    = &UART1;
@@ -74,18 +87,19 @@ STATIC void m100_payload_callback_handler(void *arg) {
 }
 
 static void TASK_M100 (void *pvParameters) {
-    size_t   length = 0;
-    uint8_t  pos    = 0;
-    uint32_t ret    = 0;
-    uint32_t size   = 0;
+    size_t   length  = 0;
+    uint8_t  pos     = 0;
+    uint32_t trigger = 0;
+    uint32_t size    = 0;
     volatile rx_state_machine_t state = STATE_HEAD;
-    uint8_t  rx_buff[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+    uint8_t  rxbuffer[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+    uint8_t  framebuf[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
     while (1) {
         uart_get_buffered_data_len( uart_port, &length );
 
         if ( 0 == length ) {
-            vTaskDelay (2 / portTICK_PERIOD_MS);
+            vTaskDelay (10 / portTICK_PERIOD_MS);
             continue;
         }
 
@@ -95,8 +109,8 @@ static void TASK_M100 (void *pvParameters) {
 
             case STATE_HEAD:
                 for ( pos=0; pos <length; pos++ ) {
-                    uart_read_bytes(uart_port, rx_buff + HEAD_OFFSET, 1, 0);
-                    if ( rx_buff[HEAD_OFFSET] == HEXIN_MAGICRF_HEAD ) {
+                    uart_read_bytes(uart_port, rxbuffer + HEAD_OFFSET, 1, 0);
+                    if ( rxbuffer[HEAD_OFFSET] == HEXIN_MAGICRF_HEAD ) {
                         state = STATE_TYPE;
                         break;
                     }
@@ -104,19 +118,25 @@ static void TASK_M100 (void *pvParameters) {
                 break;
 
             case STATE_TYPE:
-                uart_read_bytes(uart_port, rx_buff + TYPE_OFFSET,    1, 0);
-                state = STATE_COMD;
+                if ( length < 4 ) {
+                    uart_read_bytes(uart_port, rxbuffer + TYPE_OFFSET,    1, 0);
+                    state = STATE_COMD;
+                    break;
+                }
+                uart_read_bytes(uart_port, rxbuffer + TYPE_OFFSET,    4, 0);
+                size  = HEXIN_UCHAR2USHORT(rxbuffer[LENGTH_MSB_OFFSET], rxbuffer[LENGTH_LSB_OFFSET]);
+                state = STATE_DATA;
                 break;
 
             case STATE_COMD:
-                uart_read_bytes(uart_port, rx_buff + COMMAND_OFFSET, 1, 0);
+                uart_read_bytes(uart_port, rxbuffer + COMMAND_OFFSET, 1, 0);
                 state = STATE_SIZE;
                 break;
 
             case STATE_SIZE:
                 if ( length >= 2 ) {
-                    uart_read_bytes(uart_port, rx_buff + LENGTH_MSB_OFFSET, 2, 0);
-                    size  = HEXIN_UCHAR2USHORT(rx_buff[LENGTH_MSB_OFFSET], rx_buff[LENGTH_LSB_OFFSET]);
+                    uart_read_bytes(uart_port, rxbuffer + LENGTH_MSB_OFFSET, 2, 0);
+                    size  = HEXIN_UCHAR2USHORT(rxbuffer[LENGTH_MSB_OFFSET], rxbuffer[LENGTH_LSB_OFFSET]);
                     state = STATE_DATA;
                 }
                 break;
@@ -126,19 +146,25 @@ static void TASK_M100 (void *pvParameters) {
                     break;
                 }
 
-                uart_read_bytes(uart_port, rx_buff + PAYLOAD_OFFSET, size + 2, 0);
-                ret = unpackFrame( rx_buff, m100_obj.value, &size );
-                if ( ( HEXIN_ERROR == ret ) || ( HEXIN_MAGICRF_ERROR == ret ) ) {
+                uart_read_bytes(uart_port, rxbuffer + PAYLOAD_OFFSET, size + 2, 0);
+                trigger = unpackFrame( rxbuffer, framebuf, &size );
+                if ( ( HEXIN_ERROR == trigger ) || ( HEXIN_MAGICRF_ERROR == trigger ) ) {
                     state = STATE_HEAD;
                     break;
                 }
 
                 // mp_printf(&mp_plat_print, "trigger = %02X\n", m100_obj.trigger );
-                // mp_printf(&mp_plat_print, "command = %02X\n", ret );
+                // mp_printf(&mp_plat_print, "command = %02X\n", trigger );
 
-                if ( ( m100_obj.trigger & ret ) ) {
+                if ( ( m100_obj.trigger & trigger ) ) {
                     m100_obj.value_len = size;
-                    m100_obj.command   = ret;
+                    m100_obj.command   = trigger;
+
+                    do {
+                        vTaskDelay (10 / portTICK_PERIOD_MS);
+                    } while ( (__ring_buffer_free_space( &xRingBuffer ) < m100_obj.value_len) );
+                    __ring_buffer_write( &xRingBuffer, framebuf, m100_obj.value_len );
+
                     mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
                 }
 
@@ -218,7 +244,7 @@ STATIC mp_obj_t mod_m100_query(mp_uint_t n_args, const mp_obj_t *pos_args, mp_ma
     }
     ret = query(args[0].u_int, param);
     uart_write_bytes(uart_port, (char*)(param), ret);
-    return mp_const_true;
+    return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_query_obj, 1, mod_m100_query);
 
@@ -230,7 +256,7 @@ STATIC mp_obj_t mod_m100_stop( mp_obj_t self_in ) {
     ret = stop(param);
 
     uart_write_bytes(uart_port, (char*)(param), ret);
-    return mp_const_true;
+    return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_stop_obj, mod_m100_stop);
 
@@ -252,7 +278,7 @@ STATIC mp_obj_t mod_m100_param(mp_uint_t n_args, const mp_obj_t *pos_args, mp_ma
     ret = setQueryParam(args[0].u_int, args[1].u_int, args[2].u_int, args[3].u_int, param);
 
     uart_write_bytes(uart_port, (char*)(param), ret);
-    return mp_const_true;
+    return mp_const_none;
 }
 
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_param_obj, 1, mod_m100_param);
@@ -311,9 +337,14 @@ STATIC mp_obj_t m100_init_helper(m100_obj_t *self, const mp_arg_val_t *args) {
     // configure the rx timeout threshold
     uart_driver_m100->conf1.rx_tout_thrhd = 10 & UART_RX_TOUT_THRHD_V;
 
-    xRxQueue = xQueueCreate(1, 2048);
-    xTaskCreatePinnedToCore(TASK_M100, "M100Module", 4096 / sizeof(StackType_t), NULL, 7, &xM100TaskHandle, 1);
+    UBaseType_t priority = args[2].u_int;
+    BaseType_t  affinity = args[3].u_int == 0 ? 0 : 1;
 
+    if ( priority >= 11 ) {
+        mp_printf(&mp_plat_print, "< WARNNING> Task priority %d >= INTERRUPTS_TASK_PRIORITY, will be occur error.\n", priority );
+    }
+
+    xTaskCreatePinnedToCore(TASK_M100, "M100Module", (1024*5) / sizeof(StackType_t), NULL, priority, &xM100TaskHandle, affinity);
 
     return mp_const_none;
 }
@@ -322,6 +353,8 @@ STATIC const mp_arg_t m100_init_args[] = {
     { MP_QSTR_id,                                MP_ARG_INT,        {.u_int = 0} },
     { MP_QSTR_port,                              MP_ARG_INT,        {.u_int = 1} },
     { MP_QSTR_baudrate,                          MP_ARG_INT,        {.u_int = 115200} },
+    { MP_QSTR_priority,         MP_ARG_KW_ONLY | MP_ARG_INT,        {.u_int = 7} },
+    { MP_QSTR_affinity,         MP_ARG_KW_ONLY | MP_ARG_INT,        {.u_int = 1} },
 };
 
 STATIC mp_obj_t m100_make_new(const mp_obj_type_t *type, mp_uint_t n_args, mp_uint_t n_kw, const mp_obj_t *all_args) {
@@ -339,20 +372,43 @@ STATIC mp_obj_t m100_make_new(const mp_obj_type_t *type, mp_uint_t n_args, mp_ui
 
     // setup the object
     m100_obj_t *self = (m100_obj_t *)&m100_obj;
-    self->base.type = &m100_type;
 
-    // start the peripheral
-    m100_init_helper(self, &args[1]);
+    if ( false == self->init ) {
+        self->base.type   = &m100_type;
+        self->init        = true;
+        __ring_buffer_init( &xRingBuffer, self->value, HEXIN_RING_BUFFER_MAX_SIZE );
+        // start the peripheral
+        m100_init_helper(self, &args[1]);
+    } else {
+        mp_printf(&mp_plat_print, "M100 module already initialized.\r\n");
+    }
 
     return (mp_obj_t)self;
 }
 
 //
 STATIC mp_obj_t m100_char_value(mp_obj_t self_in) {
-    m100_obj_t *self = self_in;
-    return mp_obj_new_bytes(self->value, self->value_len);
+    // m100_obj_t *self = self_in;
+    uint32_t    size = 0;
+    uint8_t     data[HEXIN_RING_BUFFER_MAX_SIZE] = { 0x00 };
+
+    __ring_buffer_read( &xRingBuffer, data, HEXIN_RING_BUFFER_MAX_SIZE, &size );
+
+    if ( 0 == size ) {
+        return mp_const_none;
+    }
+
+    return mp_obj_new_str( (char *)data, size, false );
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_value_obj, m100_char_value);
+
+//
+STATIC mp_obj_t mod_m100_trigger(mp_obj_t self_in) {
+    m100_obj_t *self = self_in;
+    return mp_obj_new_int( self->command);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_trigger_obj, mod_m100_trigger);
+
 
 //
 STATIC mp_obj_t m100_command_error(mp_obj_t self_in) {
@@ -437,7 +493,7 @@ STATIC mp_obj_t mod_m100_read_data(mp_uint_t n_args, const mp_obj_t *pos_args, m
     ret = readData( (const unsigned char *)pwd, hexORstr, (module_memory_bank_t)bank, addr, length, param );
     uart_write_bytes(uart_port, (char*)(param), ret);
 
-    return mp_const_true;
+    return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_read_data_obj, 1, mod_m100_read_data);
 
@@ -484,7 +540,7 @@ STATIC mp_obj_t mod_m100_write_data(mp_uint_t n_args, const mp_obj_t *pos_args, 
     ret = writeData( (const unsigned char *)pwd, hexORstr, (module_memory_bank_t)bank, addr, length, (unsigned char *)data, param );
     uart_write_bytes(uart_port, (char*)(param), ret);
 
-    return mp_const_true;
+    return mp_const_none;
 }
 
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_write_data_obj, 1, mod_m100_write_data);
@@ -524,7 +580,7 @@ STATIC mp_obj_t mod_m100_write_epc_data(mp_uint_t n_args, const mp_obj_t *pos_ar
     ret = writeEPC((const unsigned char *)pwd, hexORstr, (unsigned char *)epc, epclen, param );
     uart_write_bytes(uart_port, (char*)(param), ret);
 
-    return mp_const_true;
+    return mp_const_none;
 }
 
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_write_epc_data_obj, 1, mod_m100_write_epc_data);
@@ -544,7 +600,7 @@ STATIC mp_obj_t mod_m100_mode(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map
 
     ret = setMode(mode, param);
     uart_write_bytes(uart_port, (char*)(param), ret);
-    return mp_const_true;
+    return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_mode_obj, 1, mod_m100_mode);
 
@@ -608,21 +664,21 @@ STATIC mp_obj_t mod_m100_jammer( mp_obj_t self_in ) {
     ret = scanJammer( param );
     uart_write_bytes( uart_port, (char*)(param), ret );
 
-    return mp_const_true;
+    return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_jammer_obj, mod_m100_jammer);
 
 
-STATIC mp_obj_t mod_m100_rssi( mp_obj_t self_in ) {
+STATIC mp_obj_t mod_m100_testrssi( mp_obj_t self_in ) {
     uint32_t ret = 0;
     uint8_t  param[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
     ret = testRSSI( param );
     uart_write_bytes( uart_port, (char*)(param), ret );
 
-    return mp_const_true;
+    return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_rssi_obj, mod_m100_rssi);
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_m100_testrssi_obj, mod_m100_testrssi);
 
 
 STATIC mp_obj_t mod_m100_version(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
@@ -671,6 +727,7 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_param),                   (mp_obj_t)&mod_m100_param_obj           },
     { MP_OBJ_NEW_QSTR(MP_QSTR_callback),                (mp_obj_t)&mod_m100_callback_obj        },
     { MP_OBJ_NEW_QSTR(MP_QSTR_value),                   (mp_obj_t)&mod_m100_value_obj           },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_trigger),                 (mp_obj_t)&mod_m100_trigger_obj         },
     { MP_OBJ_NEW_QSTR(MP_QSTR_error),                   (mp_obj_t)&mod_m100_error_obj           },
     { MP_OBJ_NEW_QSTR(MP_QSTR_size),                    (mp_obj_t)&mod_m100_size_obj            },
     { MP_OBJ_NEW_QSTR(MP_QSTR_select),                  (mp_obj_t)&mod_m100_select_obj          },
@@ -682,7 +739,7 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_setchannel),              (mp_obj_t)&mod_m100_setchannel_obj      },
     { MP_OBJ_NEW_QSTR(MP_QSTR_hfss),                    (mp_obj_t)&mod_m100_hfss_obj            },
     { MP_OBJ_NEW_QSTR(MP_QSTR_jammer),                  (mp_obj_t)&mod_m100_jammer_obj          },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_rssi),                    (mp_obj_t)&mod_m100_rssi_obj            },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_testrssi),                (mp_obj_t)&mod_m100_testrssi_obj        },
     { MP_OBJ_NEW_QSTR(MP_QSTR_version),                 (mp_obj_t)&mod_m100_version_obj         },
     { MP_OBJ_NEW_QSTR(MP_QSTR_insert_rfchannel),        (mp_obj_t)&mod_m100_insert_rfchannel_obj},
 
@@ -909,13 +966,100 @@ const mp_obj_module_t mp_module_magicrf = {
     .globals = (mp_obj_dict_t*)&mp_module_magicrf_globals,
 };
 
+
+
+/****************************************************************************************************************/
+
+
+uint32_t __ring_buffer_init( /*@out@*/ hexin_ring_buffer_t* ring_buffer, /*@keep@*/ uint8_t* buffer, uint32_t buffer_size )
+{
+    if (ring_buffer) {
+        ring_buffer->buffer = (uint8_t*)buffer;
+        ring_buffer->size   = buffer_size;
+        ring_buffer->head   = 0;
+        ring_buffer->tail   = 0;
+        return 1;
+    }
+    else
+        return 0;
+}
+
+uint32_t __ring_buffer_write( hexin_ring_buffer_t* ring_buffer, const uint8_t* data, uint32_t data_length )
+{
+    uint32_t tail_to_end = ring_buffer->size - ring_buffer->tail;
+    uint32_t amount_to_copy = MIN(data_length, (tail_to_end - 1 + ring_buffer->head) % ring_buffer->size);
+
+    memcpy(&ring_buffer->buffer[ring_buffer->tail], data, MIN(amount_to_copy, tail_to_end));
+
+    if ( tail_to_end < amount_to_copy ) {
+        memcpy( &ring_buffer->buffer[ 0 ], data + tail_to_end, amount_to_copy - tail_to_end );
+    }
+
+    /* Update the tail */
+    ring_buffer->tail = (ring_buffer->tail + amount_to_copy) % ring_buffer->size;
+
+    return amount_to_copy;
+}
+
+void __ring_buffer_get_data( hexin_ring_buffer_t* ring_buffer, uint8_t** data, uint32_t* contiguous_bytes )
+{
+    uint32_t head_to_end = ring_buffer->size - ring_buffer->head;
+
+    *data = &ring_buffer->buffer[ring_buffer->head];
+    *contiguous_bytes = MIN(head_to_end, (head_to_end + ring_buffer->tail) % ring_buffer->size);
+}
+
+void __ring_buffer_consume( hexin_ring_buffer_t* ring_buffer, uint32_t bytes_consumed )
+{
+    /* Consume elements by updating the head */
+    ring_buffer->head = (ring_buffer->head + bytes_consumed) % ring_buffer->size;
+}
+
+uint32_t __ring_buffer_free_space( hexin_ring_buffer_t* ring_buffer )
+{
+    uint32_t tail_to_end = ring_buffer->size - ring_buffer->tail;
+    return ((tail_to_end - 1 + ring_buffer->head) % ring_buffer->size);
+}
+
+uint32_t __ring_buffer_used_space( hexin_ring_buffer_t* ring_buffer )
+{
+    uint32_t head_to_end = ring_buffer->size - ring_buffer->head;
+    return ((head_to_end + ring_buffer->tail) % ring_buffer->size);
+}
+
+void __ring_buffer_read( hexin_ring_buffer_t* ring_buffer, uint8_t* data, uint32_t data_length, uint32_t* number_of_bytes_read )
+{
+    uint32_t max_bytes_to_read;
+    uint32_t i;
+    uint32_t head;
+
+    head = ring_buffer->head;
+
+    max_bytes_to_read = MIN(data_length, __ring_buffer_used_space(ring_buffer));
+
+    if ( max_bytes_to_read != 0 ) {
+        for ( i = 0; i != max_bytes_to_read; i++, ( head = ( head + 1 ) % ring_buffer->size ) ) {
+            data[ i ] = ring_buffer->buffer[ head ];
+        }
+
+        __ring_buffer_consume( ring_buffer, max_bytes_to_read );
+    }
+
+    *number_of_bytes_read = max_bytes_to_read;
+}
+
+
 /*
 from magicrf import m100
 
-reader = m100()
+reader = m100(0, affinity=0)
+reader = m100(0, priority=7, affinity=1)
 
+
+# char.error() / char.trigger() / char.value()
 def uart_cb( char ):
-    print(char.value())
+    epc, rssi  = char.value().split(',')
+    print( epc + ' RSSI: -' + int(rssi, 16) )
 
 
 reader.callback((m100.TRIGGER_QUERY | m100.TRIGGER_PA_POWER), uart_cb)
@@ -923,6 +1067,7 @@ reader.callback((m100.TRIGGER_QUERY | m100.TRIGGER_PA_POWER), uart_cb)
 reader.power(22.0)
 reader.mode(m100.MODE_HIGH_SENSITIVITY)
 reader.mode(m100.MODE_DENSE_READER)
+reader.param(q=5)
 
 reader.query()
 reader.query(100)
@@ -932,7 +1077,7 @@ reader.read(m100.BANK_USER, length=8)
 reader.write(m100.BANK_USER,data=b"\xf4Y4\x00RS:SSID\x31\x32\x33\x34\x35")
 reader.write_epc("000000000000")
 
-reader.rssi()
+reader.testrssi()
 reader.jammer()
 
 reader.hfss(m100.HFSS_STOP)
