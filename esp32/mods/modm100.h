@@ -45,6 +45,14 @@
 #define HEXIN_UCHAR2USHORT(msb, lsb)    ((((unsigned short)msb << 8) & 0xFF00) | \
                                          (((unsigned short)lsb << 0) & 0x00FF))
 
+typedef struct
+{
+    uint8_t*  buffer;
+    uint32_t  size;
+    volatile uint32_t  head; /* Index of the buffer to read from */
+    volatile uint32_t  tail; /* Index of the buffer to write to */
+} hexin_ring_buffer_t;
+
 typedef enum {
     HEAD_OFFSET = 0x00,
     TYPE_OFFSET,
@@ -141,27 +149,33 @@ unsigned int insertRFChannel( unsigned char start,
                               unsigned char stop,
                               unsigned char *pbuf );
 
+unsigned int packetHandler  ( hexin_ring_buffer_t *ringbuffer,
+                              unsigned int trigger,
+                              const unsigned char *frame,
+                              unsigned int frame_length,
+                              void (*callback)( unsigned char *, unsigned int ) );
+
 #define HEXIN_M100_BUFFER_MAX_SIZE          (128)
 #define HEXIN_RING_BUFFER_MAX_SIZE          (1024)
 /******************************************************************************
  DEFINE PRIVATE TYPES
  ******************************************************************************/
 
+unsigned int hexinRingBufferInit        ( hexin_ring_buffer_t* ring_buffer,
+                                          unsigned char* buffer,
+                                          unsigned int   buffer_size );
 
-typedef struct
-{
-    uint8_t*  buffer;
-    uint32_t  size;
-    volatile uint32_t  head; /* Index of the buffer to read from */
-    volatile uint32_t  tail; /* Index of the buffer to write to */
-} hexin_ring_buffer_t;
+unsigned int hexinRingBufferWrite       ( hexin_ring_buffer_t* ring_buffer,
+                                          const unsigned char* data,
+                                          unsigned int data_length );
 
-uint32_t __ring_buffer_init ( hexin_ring_buffer_t* ring_buffer, uint8_t* buffer, uint32_t buffer_size );
-uint32_t __ring_buffer_write( hexin_ring_buffer_t* ring_buffer, const uint8_t* data, uint32_t data_length );
-void     __ring_buffer_get_data( hexin_ring_buffer_t* ring_buffer, uint8_t** data, uint32_t* contiguous_bytes );
-void     __ring_buffer_read ( hexin_ring_buffer_t* ring_buffer, uint8_t* data, uint32_t data_length, uint32_t* number_of_bytes_read );
-uint32_t __ring_buffer_free_space( hexin_ring_buffer_t* ring_buffer );
-void     __ring_buffer_consume( hexin_ring_buffer_t* ring_buffer, uint32_t bytes_consumed );
+void hexinRingBufferRead                ( hexin_ring_buffer_t* ring_buffer,
+                                          unsigned char* data,
+                                          unsigned int   data_length,
+                                          unsigned int*  number_of_bytes_read );
+
+unsigned int hexinRingBufferUsedSpace   ( hexin_ring_buffer_t* ring_buffer );
+unsigned int hexinRingBufferFreeSpace   ( hexin_ring_buffer_t* ring_buffer );
 
 
 typedef struct {

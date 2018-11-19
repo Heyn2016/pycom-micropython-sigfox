@@ -8,7 +8,8 @@
  * LICENSING TERMS:
  * ---------------
  *                          2018/10/18 V1.4.0 [Heyn] Release.
- *
+ *                          2018/11/14 V1.4.1 [Heyn] Modify TASK_M100() function.
+ * 
 *****************************************************************************************************************/
 
 #include <stdint.h>
@@ -86,14 +87,20 @@ STATIC void m100_payload_callback_handler(void *arg) {
     }
 }
 
+static void __callback_event( unsigned char *data, unsigned int size )
+{
+    m100_obj.value_len = size;
+    mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
+}
+
 static void TASK_M100 (void *pvParameters) {
     size_t   length  = 0;
-    uint8_t  pos     = 0;
-    uint32_t trigger = 0;
+    // uint8_t  pos     = 0;
+    // uint32_t trigger = 0;
     uint32_t size    = 0;
-    volatile rx_state_machine_t state = STATE_HEAD;
+    // volatile rx_state_machine_t state = STATE_HEAD;
     uint8_t  rxbuffer[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
-    uint8_t  framebuf[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
+    // uint8_t  framebuf[HEXIN_M100_BUFFER_MAX_SIZE] = { 0x00 };
 
     while (1) {
         uart_get_buffered_data_len( uart_port, &length );
@@ -102,79 +109,82 @@ static void TASK_M100 (void *pvParameters) {
             vTaskDelay (10 / portTICK_PERIOD_MS);
             continue;
         }
+        length = length >= HEXIN_M100_BUFFER_MAX_SIZE ? HEXIN_M100_BUFFER_MAX_SIZE : length;
+        size = uart_read_bytes(uart_port, rxbuffer, length, 0);
+        packetHandler( &xRingBuffer, m100_obj.trigger, rxbuffer, size, __callback_event );
 
         // mp_printf(&mp_plat_print, "uart_get_buffered_data_len = %d\n", length);
 
-        switch ( state ) {  /* STATE MACHINE */
+        // switch ( state ) {  /* STATE MACHINE */
 
-            case STATE_HEAD:
-                for ( pos=0; pos <length; pos++ ) {
-                    uart_read_bytes(uart_port, rxbuffer + HEAD_OFFSET, 1, 0);
-                    if ( rxbuffer[HEAD_OFFSET] == HEXIN_MAGICRF_HEAD ) {
-                        state = STATE_TYPE;
-                        break;
-                    }
-                }
-                break;
+        //     case STATE_HEAD:
+        //         for ( pos=0; pos <length; pos++ ) {
+        //             uart_read_bytes(uart_port, rxbuffer + HEAD_OFFSET, 1, 0);
+        //             if ( rxbuffer[HEAD_OFFSET] == HEXIN_MAGICRF_HEAD ) {
+        //                 state = STATE_TYPE;
+        //                 break;
+        //             }
+        //         }
+        //         break;
 
-            case STATE_TYPE:
-                if ( length < 4 ) {
-                    uart_read_bytes(uart_port, rxbuffer + TYPE_OFFSET,    1, 0);
-                    state = STATE_COMD;
-                    break;
-                }
-                uart_read_bytes(uart_port, rxbuffer + TYPE_OFFSET,    4, 0);
-                size  = HEXIN_UCHAR2USHORT(rxbuffer[LENGTH_MSB_OFFSET], rxbuffer[LENGTH_LSB_OFFSET]);
-                state = STATE_DATA;
-                break;
+        //     case STATE_TYPE:
+        //         if ( length < 4 ) {
+        //             uart_read_bytes(uart_port, rxbuffer + TYPE_OFFSET,    1, 0);
+        //             state = STATE_COMD;
+        //             break;
+        //         }
+        //         uart_read_bytes(uart_port, rxbuffer + TYPE_OFFSET,    4, 0);
+        //         size  = HEXIN_UCHAR2USHORT(rxbuffer[LENGTH_MSB_OFFSET], rxbuffer[LENGTH_LSB_OFFSET]);
+        //         state = STATE_DATA;
+        //         break;
 
-            case STATE_COMD:
-                uart_read_bytes(uart_port, rxbuffer + COMMAND_OFFSET, 1, 0);
-                state = STATE_SIZE;
-                break;
+        //     case STATE_COMD:
+        //         uart_read_bytes(uart_port, rxbuffer + COMMAND_OFFSET, 1, 0);
+        //         state = STATE_SIZE;
+        //         break;
 
-            case STATE_SIZE:
-                if ( length >= 2 ) {
-                    uart_read_bytes(uart_port, rxbuffer + LENGTH_MSB_OFFSET, 2, 0);
-                    size  = HEXIN_UCHAR2USHORT(rxbuffer[LENGTH_MSB_OFFSET], rxbuffer[LENGTH_LSB_OFFSET]);
-                    state = STATE_DATA;
-                }
-                break;
+        //     case STATE_SIZE:
+        //         if ( length >= 2 ) {
+        //             uart_read_bytes(uart_port, rxbuffer + LENGTH_MSB_OFFSET, 2, 0);
+        //             size  = HEXIN_UCHAR2USHORT(rxbuffer[LENGTH_MSB_OFFSET], rxbuffer[LENGTH_LSB_OFFSET]);
+        //             state = STATE_DATA;
+        //         }
+        //         break;
 
-            case STATE_DATA:
-                if ( length < (size + 2) ) {
-                    break;
-                }
+        //     case STATE_DATA:
+        //         if ( length < (size + 2) ) {
+        //             break;
+        //         }
 
-                uart_read_bytes(uart_port, rxbuffer + PAYLOAD_OFFSET, size + 2, 0);
-                trigger = unpackFrame( rxbuffer, framebuf, &size );
-                if ( ( HEXIN_ERROR == trigger ) || ( HEXIN_MAGICRF_ERROR == trigger ) ) {
-                    state = STATE_HEAD;
-                    break;
-                }
+        //         uart_read_bytes(uart_port, rxbuffer + PAYLOAD_OFFSET, size + 2, 0);
+        //         trigger = unpackFrame( rxbuffer, framebuf, &size );
+        //         if ( ( HEXIN_ERROR == trigger ) || ( HEXIN_MAGICRF_ERROR == trigger ) ) {
+        //             state = STATE_HEAD;
+        //             break;
+        //         }
 
-                // mp_printf(&mp_plat_print, "trigger = %02X\n", m100_obj.trigger );
-                // mp_printf(&mp_plat_print, "command = %02X\n", trigger );
+        //         // mp_printf(&mp_plat_print, "trigger = %02X\n", m100_obj.trigger );
+        //         // mp_printf(&mp_plat_print, "command = %02X\n", trigger );
 
-                if ( ( m100_obj.trigger & trigger ) ) {
-                    m100_obj.value_len = size;
-                    m100_obj.command   = trigger;
+        //         if ( ( m100_obj.trigger & trigger ) ) {
+        //             m100_obj.value_len = size;
+        //             m100_obj.command   = trigger;
 
-                    do {
-                        vTaskDelay (10 / portTICK_PERIOD_MS);
-                    } while ( (__ring_buffer_free_space( &xRingBuffer ) < m100_obj.value_len) );
-                    __ring_buffer_write( &xRingBuffer, framebuf, m100_obj.value_len );
+        //             do {
+        //                 vTaskDelay (10 / portTICK_PERIOD_MS);
+        //             } while ( (hexinRingBufferFreeSpace( &xRingBuffer ) < m100_obj.value_len) );
+        //             hexinRingBufferWrite( &xRingBuffer, framebuf, m100_obj.value_len );
 
-                    mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
-                }
+        //             mp_irq_queue_interrupt(m100_payload_callback_handler, (void *)&m100_obj);
+        //         }
 
-                state = STATE_HEAD;
-                break;
+        //         state = STATE_HEAD;
+        //         break;
 
-            default:
-                state = STATE_HEAD;
-                break;
-        } /* End STATE MACHINE */
+        //     default:
+        //         state = STATE_HEAD;
+        //         break;
+        // } /* End STATE MACHINE */
     }
 }
 
@@ -354,7 +364,7 @@ STATIC const mp_arg_t m100_init_args[] = {
     { MP_QSTR_port,                              MP_ARG_INT,        {.u_int = 1} },
     { MP_QSTR_baudrate,                          MP_ARG_INT,        {.u_int = 115200} },
     { MP_QSTR_priority,         MP_ARG_KW_ONLY | MP_ARG_INT,        {.u_int = 7} },
-    { MP_QSTR_affinity,         MP_ARG_KW_ONLY | MP_ARG_INT,        {.u_int = 1} },
+    { MP_QSTR_affinity,         MP_ARG_KW_ONLY | MP_ARG_INT,        {.u_int = 0} },
 };
 
 STATIC mp_obj_t m100_make_new(const mp_obj_type_t *type, mp_uint_t n_args, mp_uint_t n_kw, const mp_obj_t *all_args) {
@@ -376,7 +386,7 @@ STATIC mp_obj_t m100_make_new(const mp_obj_type_t *type, mp_uint_t n_args, mp_ui
     if ( false == self->init ) {
         self->base.type   = &m100_type;
         self->init        = true;
-        __ring_buffer_init( &xRingBuffer, self->value, HEXIN_RING_BUFFER_MAX_SIZE );
+        hexinRingBufferInit( &xRingBuffer, self->value, HEXIN_RING_BUFFER_MAX_SIZE );
         // start the peripheral
         m100_init_helper(self, &args[1]);
     } else {
@@ -392,7 +402,7 @@ STATIC mp_obj_t m100_char_value(mp_obj_t self_in) {
     uint32_t    size = 0;
     uint8_t     data[HEXIN_RING_BUFFER_MAX_SIZE] = { 0x00 };
 
-    __ring_buffer_read( &xRingBuffer, data, HEXIN_RING_BUFFER_MAX_SIZE, &size );
+    hexinRingBufferRead( &xRingBuffer, data, HEXIN_RING_BUFFER_MAX_SIZE, &size );
 
     if ( 0 == size ) {
         return mp_const_none;
@@ -705,7 +715,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_KW(mod_m100_version_obj, 1, mod_m100_version);
 STATIC mp_obj_t mod_m100_insert_rfchannel(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_start,     MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 1} },
-        { MP_QSTR_end,       MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 5} },
+        { MP_QSTR_stop,      MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 5} },
     };
 
     uint32_t ret = 0;
@@ -741,7 +751,7 @@ STATIC const mp_map_elem_t m100_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_jammer),                  (mp_obj_t)&mod_m100_jammer_obj          },
     { MP_OBJ_NEW_QSTR(MP_QSTR_testrssi),                (mp_obj_t)&mod_m100_testrssi_obj        },
     { MP_OBJ_NEW_QSTR(MP_QSTR_version),                 (mp_obj_t)&mod_m100_version_obj         },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_insert_rfchannel),        (mp_obj_t)&mod_m100_insert_rfchannel_obj},
+    { MP_OBJ_NEW_QSTR(MP_QSTR_insert),                  (mp_obj_t)&mod_m100_insert_rfchannel_obj},
 
     // constants
     { MP_OBJ_NEW_QSTR(MP_QSTR_PARAM_SELECT_ALL),        MP_OBJ_NEW_SMALL_INT(0)  },
@@ -966,88 +976,7 @@ const mp_obj_module_t mp_module_magicrf = {
     .globals = (mp_obj_dict_t*)&mp_module_magicrf_globals,
 };
 
-
-
 /****************************************************************************************************************/
-
-
-uint32_t __ring_buffer_init( /*@out@*/ hexin_ring_buffer_t* ring_buffer, /*@keep@*/ uint8_t* buffer, uint32_t buffer_size )
-{
-    if (ring_buffer) {
-        ring_buffer->buffer = (uint8_t*)buffer;
-        ring_buffer->size   = buffer_size;
-        ring_buffer->head   = 0;
-        ring_buffer->tail   = 0;
-        return 1;
-    }
-    else
-        return 0;
-}
-
-uint32_t __ring_buffer_write( hexin_ring_buffer_t* ring_buffer, const uint8_t* data, uint32_t data_length )
-{
-    uint32_t tail_to_end = ring_buffer->size - ring_buffer->tail;
-    uint32_t amount_to_copy = MIN(data_length, (tail_to_end - 1 + ring_buffer->head) % ring_buffer->size);
-
-    memcpy(&ring_buffer->buffer[ring_buffer->tail], data, MIN(amount_to_copy, tail_to_end));
-
-    if ( tail_to_end < amount_to_copy ) {
-        memcpy( &ring_buffer->buffer[ 0 ], data + tail_to_end, amount_to_copy - tail_to_end );
-    }
-
-    /* Update the tail */
-    ring_buffer->tail = (ring_buffer->tail + amount_to_copy) % ring_buffer->size;
-
-    return amount_to_copy;
-}
-
-void __ring_buffer_get_data( hexin_ring_buffer_t* ring_buffer, uint8_t** data, uint32_t* contiguous_bytes )
-{
-    uint32_t head_to_end = ring_buffer->size - ring_buffer->head;
-
-    *data = &ring_buffer->buffer[ring_buffer->head];
-    *contiguous_bytes = MIN(head_to_end, (head_to_end + ring_buffer->tail) % ring_buffer->size);
-}
-
-void __ring_buffer_consume( hexin_ring_buffer_t* ring_buffer, uint32_t bytes_consumed )
-{
-    /* Consume elements by updating the head */
-    ring_buffer->head = (ring_buffer->head + bytes_consumed) % ring_buffer->size;
-}
-
-uint32_t __ring_buffer_free_space( hexin_ring_buffer_t* ring_buffer )
-{
-    uint32_t tail_to_end = ring_buffer->size - ring_buffer->tail;
-    return ((tail_to_end - 1 + ring_buffer->head) % ring_buffer->size);
-}
-
-uint32_t __ring_buffer_used_space( hexin_ring_buffer_t* ring_buffer )
-{
-    uint32_t head_to_end = ring_buffer->size - ring_buffer->head;
-    return ((head_to_end + ring_buffer->tail) % ring_buffer->size);
-}
-
-void __ring_buffer_read( hexin_ring_buffer_t* ring_buffer, uint8_t* data, uint32_t data_length, uint32_t* number_of_bytes_read )
-{
-    uint32_t max_bytes_to_read;
-    uint32_t i;
-    uint32_t head;
-
-    head = ring_buffer->head;
-
-    max_bytes_to_read = MIN(data_length, __ring_buffer_used_space(ring_buffer));
-
-    if ( max_bytes_to_read != 0 ) {
-        for ( i = 0; i != max_bytes_to_read; i++, ( head = ( head + 1 ) % ring_buffer->size ) ) {
-            data[ i ] = ring_buffer->buffer[ head ];
-        }
-
-        __ring_buffer_consume( ring_buffer, max_bytes_to_read );
-    }
-
-    *number_of_bytes_read = max_bytes_to_read;
-}
-
 
 /*
 from magicrf import m100
